@@ -10,6 +10,15 @@ export interface ProcessingState {
   progress?: number;
 }
 
+export interface BookSession {
+  id: string;
+  metadata: BookMetadata | null;
+  summary: string;
+  status: 'parsing' | 'analyzing' | 'complete' | 'error';
+  message?: string;
+  timestamp: number;
+}
+
 export interface GitHubConfig {
   token: string;
   owner: string;

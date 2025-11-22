@@ -10,7 +10,11 @@ import {
   Github, 
   Settings,
   BookOpen,
-  Save
+  Save,
+  Plus,
+  Trash2,
+  ChevronRight,
+  Clock
 } from 'lucide-react';
 
 export { 
@@ -24,5 +28,9 @@ export {
   Github, 
   Settings,
   BookOpen,
-  Save
+  Save,
+  Plus,
+  Trash2,
+  ChevronRight,
+  Clock
 };
