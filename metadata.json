@@ -1,0 +1,5 @@
+{
+  "name": "BookDistill - EPUB Knowledge Extractor",
+  "description": "Convert EPUBs to text and use Gemini 2.5 Flash to extract comprehensive knowledge summaries. Includes GitHub integration for saving results.",
+  "requestFramePermissions": []
+}
