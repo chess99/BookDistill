@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { GoogleGenAI } from '@google/genai';
+import remarkGfm from 'remark-gfm';
+import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
 import { parseEpub } from './services/epubService';
 import { BookMetadata, BookSession } from './types';
 import GitHubModal from './components/GitHubModal';
@@ -45,9 +46,18 @@ function App() {
   // Helpers to get current active session
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
+  // Auto-scroll to bottom during streaming
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeSession?.status === 'analyzing' && scrollRef.current) {
+      // Optional: Auto-scroll logic. 
+      // For reading long text, sometimes users prefer it NOT to auto-scroll aggressively.
+      // We'll leave it manual for now or only if at bottom.
+    }
+  }, [activeSession?.summary, activeSession?.status]);
+
   const createSession = async (file: File) => {
     if (!file.name.endsWith('.epub')) {
-      // Could show global toast, but for now let's just return
       alert("Please upload a valid .epub file");
       return;
     }
@@ -139,20 +149,44 @@ function App() {
         4. **Actionable Takeaways / Insights**: What can the reader learn or apply?
         5. **Notable Quotes**: Significant text from the book.
 
+        Use proper Markdown formatting:
+        - Use # for main title (if you include one)
+        - Use ## for the section headers
+        - Use ### for subsections
+        - Use bullet points and bold text for emphasis
+        - Use > for quotes
+
         Here is the full text of the book:
         ${text}
       `;
 
-      const response = await ai.models.generateContent({
+      // Use streaming instead of unary call
+      const responseStream = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: { temperature: 0.3 }
       });
 
-      const resultText = response.text;
-      if (!resultText) throw new Error("No response text generated");
+      let fullText = '';
+      
+      for await (const chunk of responseStream) {
+        // chunk is GenerateContentResponse
+        const chunkText = chunk.text;
+        if (chunkText) {
+          fullText += chunkText;
+          // Update state with accumulated text
+          // Note: State updates in loops can be expensive, but React 18 batches them well enough for text streams usually.
+          // If performance drops, we can throttle this.
+          setSessions(prev => prev.map(s => {
+            if (s.id === sessionId) {
+              return { ...s, summary: fullText, status: 'analyzing' };
+            }
+            return s;
+          }));
+        }
+      }
 
-      updateSession(sessionId, { summary: resultText, status: 'complete' });
+      updateSession(sessionId, { status: 'complete' });
 
     } catch (e: any) {
       console.error(e);
@@ -331,7 +365,15 @@ function App() {
              <BookOpen size={20} />
           </div>
           <div>
-            <h2 className="font-bold text-slate-900 leading-tight">{session.metadata?.title || 'Untitled Book'}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-slate-900 leading-tight">{session.metadata?.title || 'Untitled Book'}</h2>
+              {session.status === 'analyzing' && (
+                 <span className="flex h-2 w-2 relative">
+                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                   <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                 </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 flex items-center gap-2">
               <span>{session.metadata?.author}</span>
               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
@@ -372,9 +414,34 @@ function App() {
       </div>
 
       {/* Result Content */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12">
-        <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 min-h-full prose prose-slate prose-headings:font-bold prose-headings:text-slate-800 prose-p:text-slate-600 prose-a:text-blue-600 prose-strong:text-slate-800 prose-li:text-slate-600">
-           <ReactMarkdown>{session.summary}</ReactMarkdown>
+      <div className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12" ref={scrollRef}>
+        <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 min-h-full">
+           <div className="prose prose-slate max-w-none">
+             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({node, ...props}) => <h1 className="text-3xl font-extrabold text-slate-900 mb-6 pb-2 border-b border-slate-100" {...props} />,
+                h2: ({node, ...props}) => <h2 className="text-2xl font-bold text-slate-800 mt-10 mb-4 flex items-center gap-2" {...props} />,
+                h3: ({node, ...props}) => <h3 className="text-xl font-bold text-slate-700 mt-8 mb-3" {...props} />,
+                p: ({node, ...props}) => <p className="text-slate-600 leading-relaxed mb-4" {...props} />,
+                ul: ({node, ...props}) => <ul className="list-disc list-outside ml-6 space-y-2 text-slate-600 mb-6" {...props} />,
+                ol: ({node, ...props}) => <ol className="list-decimal list-outside ml-6 space-y-2 text-slate-600 mb-6" {...props} />,
+                li: ({node, ...props}) => <li className="pl-1" {...props} />,
+                blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-500 bg-blue-50 p-4 rounded-r-lg my-6 text-slate-700 italic" {...props} />,
+                code: ({node, ...props}) => <code className="bg-slate-100 text-red-500 px-1 py-0.5 rounded text-sm font-mono" {...props} />,
+                pre: ({node, ...props}) => <pre className="bg-slate-900 text-slate-50 p-4 rounded-lg overflow-x-auto my-6" {...props} />,
+                strong: ({node, ...props}) => <strong className="font-bold text-slate-900" {...props} />,
+                a: ({node, ...props}) => <a className="text-blue-600 hover:underline" {...props} />,
+                hr: ({node, ...props}) => <hr className="my-8 border-slate-200" {...props} />,
+              }}
+             >
+               {session.summary}
+             </ReactMarkdown>
+           </div>
+           {/* Blinking Cursor for streaming effect */}
+           {session.status === 'analyzing' && (
+             <div className="inline-block w-2 h-5 bg-blue-500 animate-pulse ml-1 align-middle"></div>
+           )}
         </div>
       </div>
     </div>
@@ -428,7 +495,7 @@ function App() {
                 mt-1 min-w-[24px] h-6 flex items-center justify-center rounded
                 ${session.status === 'complete' ? 'text-green-500' : session.status === 'error' ? 'text-red-500' : 'text-blue-500'}
               `}>
-                {session.status === 'parsing' || session.status === 'analyzing' ? (
+                {session.status === 'parsing' || (session.status === 'analyzing' && !session.summary) ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : session.status === 'error' ? (
                   <AlertCircle size={14} />
@@ -469,9 +536,13 @@ function App() {
         
         {activeSessionId && activeSession && (
           <>
-            {(activeSession.status === 'parsing' || activeSession.status === 'analyzing') && renderProcessingView(activeSession)}
+            {/* Show loader only if parsing OR (analyzing but no text received yet) */}
+            {(activeSession.status === 'parsing' || (activeSession.status === 'analyzing' && !activeSession.summary)) && renderProcessingView(activeSession)}
+            
             {activeSession.status === 'error' && renderErrorView(activeSession)}
-            {activeSession.status === 'complete' && renderResultView(activeSession)}
+            
+            {/* Show result if complete OR (analyzing AND has text) */}
+            {((activeSession.status === 'analyzing' && activeSession.summary) || activeSession.status === 'complete') && renderResultView(activeSession)}
           </>
         )}
       </main>
