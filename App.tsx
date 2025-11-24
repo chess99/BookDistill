@@ -19,7 +19,8 @@ import {
   Trash2,
   Clock,
   ChevronRight,
-  Languages
+  Languages,
+  Cpu
 } from './components/Icons';
 
 const LANGUAGES = [
@@ -32,13 +33,21 @@ const LANGUAGES = [
   { code: 'German', label: 'Deutsch (German)' },
 ];
 
+const MODELS = [
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fast)', shortName: 'Flash 2.5' },
+  { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro (Smart)', shortName: 'Pro 3.0' },
+];
+
 function App() {
   const [sessions, setSessions] = useState<BookSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  
+  // Settings State
   const [targetLanguage, setTargetLanguage] = useState<string>('Chinese');
+  const [selectedModel, setSelectedModel] = useState<string>(MODELS[0].id);
 
   // Gemini Init
   const apiKey = process.env.API_KEY || ''; 
@@ -64,6 +73,7 @@ function App() {
 
     const newId = Date.now().toString();
     const currentLang = targetLanguage;
+    const currentModel = selectedModel;
 
     const newSession: BookSession = {
       id: newId,
@@ -72,7 +82,8 @@ function App() {
       status: 'parsing',
       message: 'Extracting text from EPUB...',
       timestamp: Date.now(),
-      language: currentLang
+      language: currentLang,
+      model: currentModel
     };
 
     setSessions(prev => [newSession, ...prev]);
@@ -102,7 +113,7 @@ function App() {
         return;
       }
 
-      await generateSummary(newId, text, title, author, currentLang);
+      await generateSummary(newId, text, title, author, currentLang, currentModel);
 
     } catch (e: any) {
       updateSession(newId, { status: 'error', message: `Failed to parse EPUB: ${e.message}` });
@@ -121,13 +132,13 @@ function App() {
     }
   };
 
-  const generateSummary = async (sessionId: string, text: string, title: string, author: string, language: string) => {
+  const generateSummary = async (sessionId: string, text: string, title: string, author: string, language: string, modelId: string) => {
     if (!apiKey) {
       updateSession(sessionId, { status: 'error', message: 'API Key not found in environment variables.' });
       return;
     }
 
-    updateSession(sessionId, { status: 'analyzing', message: `Sending to Gemini 2.5 Flash for deep analysis in ${language}...` });
+    updateSession(sessionId, { status: 'analyzing', message: `Sending to ${modelId} for deep analysis in ${language}...` });
 
     try {
       const ai = new GoogleGenAI({ apiKey });
@@ -162,7 +173,7 @@ function App() {
 
       // Use streaming instead of unary call
       const responseStream = await ai.models.generateContentStream({
-        model: 'gemini-2.5-flash',
+        model: modelId,
         contents: prompt,
         config: { temperature: 0.3 }
       });
@@ -174,9 +185,6 @@ function App() {
         const chunkText = chunk.text;
         if (chunkText) {
           fullText += chunkText;
-          // Update state with accumulated text
-          // Note: State updates in loops can be expensive, but React 18 batches them well enough for text streams usually.
-          // If performance drops, we can throttle this.
           setSessions(prev => prev.map(s => {
             if (s.id === sessionId) {
               return { ...s, summary: fullText, status: 'analyzing' };
@@ -252,27 +260,49 @@ function App() {
       <div className="text-center mb-6">
         <h2 className="text-3xl font-bold text-slate-900 mb-2">Distill Knowledge from Books</h2>
         <p className="text-slate-500 max-w-md mx-auto">
-          Upload an EPUB to get a comprehensive AI-generated summary and analysis using Gemini 2.5 Flash.
+          Upload an EPUB to get a comprehensive AI-generated summary and analysis using the most advanced Gemini models.
         </p>
       </div>
 
-      {/* Language Selector */}
-      <div className="flex items-center gap-3 mb-6 bg-white p-2 px-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex items-center gap-2 text-slate-500">
-          <Languages size={18} />
-          <span className="text-sm font-medium">Output Language:</span>
+      <div className="flex flex-col sm:flex-row gap-4 mb-8">
+        {/* Language Selector */}
+        <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 text-slate-500">
+            <Languages size={18} />
+            <span className="text-sm font-medium">Language:</span>
+          </div>
+          <div className="relative">
+            <select
+              value={targetLanguage}
+              onChange={(e) => setTargetLanguage(e.target.value)}
+              className="bg-transparent border-none outline-none text-sm font-bold text-slate-800 focus:ring-0 cursor-pointer py-1 pr-2 rounded-md hover:text-blue-600 transition-colors appearance-none"
+              style={{ textAlignLast: 'center' }}
+            >
+              {LANGUAGES.map(lang => (
+                <option key={lang.code} value={lang.code}>{lang.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div className="relative">
-          <select
-            value={targetLanguage}
-            onChange={(e) => setTargetLanguage(e.target.value)}
-            className="bg-transparent border-none outline-none text-sm font-bold text-slate-800 focus:ring-0 cursor-pointer py-1 pr-2 rounded-md hover:text-blue-600 transition-colors appearance-none"
-            style={{ textAlignLast: 'center' }}
-          >
-            {LANGUAGES.map(lang => (
-              <option key={lang.code} value={lang.code}>{lang.label}</option>
-            ))}
-          </select>
+
+        {/* Model Selector */}
+        <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-2 text-slate-500">
+            <Cpu size={18} />
+            <span className="text-sm font-medium">Model:</span>
+          </div>
+          <div className="relative">
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="bg-transparent border-none outline-none text-sm font-bold text-slate-800 focus:ring-0 cursor-pointer py-1 pr-2 rounded-md hover:text-blue-600 transition-colors appearance-none"
+              style={{ textAlignLast: 'center' }}
+            >
+              {MODELS.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -322,8 +352,13 @@ function App() {
           {session.status === 'parsing' ? 'Reading Book...' : 'Distilling Knowledge...'}
         </h2>
         <p className="text-slate-500">{session.message}</p>
-        <div className="text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full inline-block mt-2">
-          Target Language: {session.language}
+        <div className="flex gap-2 justify-center mt-2">
+           <div className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+            {MODELS.find(m => m.id === session.model)?.name || session.model}
+          </div>
+          <div className="text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+            {session.language}
+          </div>
         </div>
         {session.metadata && (
           <div className="mt-6 p-4 bg-white rounded-xl border border-slate-200 shadow-sm inline-flex items-center gap-4 text-left max-w-md">
@@ -378,6 +413,10 @@ function App() {
               <span>{session.metadata?.author}</span>
               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
               <span className="text-slate-400">{session.language}</span>
+              <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+              <span className="text-blue-500 font-medium">
+                {MODELS.find(m => m.id === session.model)?.shortName || 'Unknown Model'}
+              </span>
             </p>
           </div>
         </div>
@@ -507,11 +546,16 @@ function App() {
                 <p className={`text-sm font-medium truncate ${activeSessionId === session.id ? 'text-blue-700' : 'text-slate-700'}`}>
                   {session.metadata?.title || 'Untitled Book'}
                 </p>
-                <div className="flex items-center justify-between text-xs text-slate-400">
-                   <span className="truncate max-w-[80px]">
-                    {session.metadata?.author || (session.status === 'parsing' ? '...' : 'No Author')}
-                   </span>
-                   <span className="bg-slate-100 px-1 rounded text-[10px]">{session.language.substring(0, 2).toUpperCase()}</span>
+                <div className="flex items-center justify-between text-xs text-slate-400 mt-1">
+                   <div className="flex items-center gap-1">
+                     <span className="truncate max-w-[60px]">
+                      {session.metadata?.author || (session.status === 'parsing' ? '...' : 'No Author')}
+                     </span>
+                   </div>
+                   <div className="flex items-center gap-1 opacity-70">
+                     <span className="bg-slate-100 px-1 rounded text-[10px] uppercase">{session.language.substring(0, 2)}</span>
+                     <span className="text-[10px] text-blue-500">{MODELS.find(m => m.id === session.model)?.shortName?.split(' ')[1] || 'AI'}</span>
+                   </div>
                 </div>
               </div>
               <button 
@@ -526,7 +570,7 @@ function App() {
         </div>
         
         <div className="p-4 border-t border-slate-100 text-center">
-          <p className="text-xs text-slate-400">Powered by Gemini 2.5 Flash</p>
+          <p className="text-xs text-slate-400">Powered by Gemini 2.5 & 3.0</p>
         </div>
       </div>
 

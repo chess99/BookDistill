@@ -18,6 +18,7 @@ export interface BookSession {
   message?: string;
   timestamp: number;
   language: string;
+  model: string;
 }
 
 export interface GitHubConfig {

@@ -15,7 +15,8 @@ import {
   Trash2,
   ChevronRight,
   Clock,
-  Languages
+  Languages,
+  Cpu
 } from 'lucide-react';
 
 export { 
@@ -34,5 +35,6 @@ export {
   Trash2,
   ChevronRight,
   Clock,
-  Languages
+  Languages,
+  Cpu
 };
