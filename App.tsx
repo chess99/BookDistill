@@ -17,8 +17,19 @@ import {
   Plus,
   Trash2,
   Clock,
-  ChevronRight
+  ChevronRight,
+  Languages
 } from './components/Icons';
+
+const LANGUAGES = [
+  { code: 'Chinese', label: '中文 (Chinese)' },
+  { code: 'English', label: 'English' },
+  { code: 'Japanese', label: '日本語 (Japanese)' },
+  { code: 'Korean', label: '한국어 (Korean)' },
+  { code: 'Spanish', label: 'Español (Spanish)' },
+  { code: 'French', label: 'Français (French)' },
+  { code: 'German', label: 'Deutsch (German)' },
+];
 
 function App() {
   const [sessions, setSessions] = useState<BookSession[]>([]);
@@ -26,6 +37,7 @@ function App() {
   const [dragActive, setDragActive] = useState(false);
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [targetLanguage, setTargetLanguage] = useState<string>('Chinese');
 
   // Gemini Init
   const apiKey = process.env.API_KEY || ''; 
@@ -41,13 +53,16 @@ function App() {
     }
 
     const newId = Date.now().toString();
+    const currentLang = targetLanguage;
+
     const newSession: BookSession = {
       id: newId,
       metadata: null,
       summary: '',
       status: 'parsing',
       message: 'Extracting text from EPUB...',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      language: currentLang
     };
 
     setSessions(prev => [newSession, ...prev]);
@@ -77,7 +92,7 @@ function App() {
         return;
       }
 
-      await generateSummary(newId, text, title, author);
+      await generateSummary(newId, text, title, author, currentLang);
 
     } catch (e: any) {
       updateSession(newId, { status: 'error', message: `Failed to parse EPUB: ${e.message}` });
@@ -96,13 +111,13 @@ function App() {
     }
   };
 
-  const generateSummary = async (sessionId: string, text: string, title: string, author: string) => {
+  const generateSummary = async (sessionId: string, text: string, title: string, author: string, language: string) => {
     if (!apiKey) {
       updateSession(sessionId, { status: 'error', message: 'API Key not found in environment variables.' });
       return;
     }
 
-    updateSession(sessionId, { status: 'analyzing', message: 'Sending to Gemini 2.5 Flash for deep analysis...' });
+    updateSession(sessionId, { status: 'analyzing', message: `Sending to Gemini 2.5 Flash for deep analysis in ${language}...` });
 
     try {
       const ai = new GoogleGenAI({ apiKey });
@@ -112,6 +127,10 @@ function App() {
         Please analyze the following book: "${title}" by ${author}.
         
         Your task is to provide a comprehensive knowledge extraction.
+        
+        IMPORTANT: The output must be strictly in ${language}. 
+        Translate all section headers and content to ${language}.
+
         Structure the response in Markdown format with the following sections:
         
         1. **Executive Summary**: A high-level overview of the book's core message.
@@ -196,11 +215,31 @@ function App() {
       className="flex-1 flex flex-col items-center justify-center p-8 animate-in fade-in duration-500"
       onDragEnter={handleDrag}
     >
-      <div className="text-center mb-8">
+      <div className="text-center mb-6">
         <h2 className="text-3xl font-bold text-slate-900 mb-2">Distill Knowledge from Books</h2>
         <p className="text-slate-500 max-w-md mx-auto">
           Upload an EPUB to get a comprehensive AI-generated summary and analysis using Gemini 2.5 Flash.
         </p>
+      </div>
+
+      {/* Language Selector */}
+      <div className="flex items-center gap-3 mb-6 bg-white p-2 px-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+        <div className="flex items-center gap-2 text-slate-500">
+          <Languages size={18} />
+          <span className="text-sm font-medium">Output Language:</span>
+        </div>
+        <div className="relative">
+          <select
+            value={targetLanguage}
+            onChange={(e) => setTargetLanguage(e.target.value)}
+            className="bg-transparent border-none outline-none text-sm font-bold text-slate-800 focus:ring-0 cursor-pointer py-1 pr-2 rounded-md hover:text-blue-600 transition-colors appearance-none"
+            style={{ textAlignLast: 'center' }}
+          >
+            {LANGUAGES.map(lang => (
+              <option key={lang.code} value={lang.code}>{lang.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div 
@@ -249,6 +288,9 @@ function App() {
           {session.status === 'parsing' ? 'Reading Book...' : 'Distilling Knowledge...'}
         </h2>
         <p className="text-slate-500">{session.message}</p>
+        <div className="text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full inline-block mt-2">
+          Target Language: {session.language}
+        </div>
         {session.metadata && (
           <div className="mt-6 p-4 bg-white rounded-xl border border-slate-200 shadow-sm inline-flex items-center gap-4 text-left max-w-md">
              <div className="p-2 bg-slate-50 rounded-lg">
@@ -290,7 +332,11 @@ function App() {
           </div>
           <div>
             <h2 className="font-bold text-slate-900 leading-tight">{session.metadata?.title || 'Untitled Book'}</h2>
-            <p className="text-xs text-slate-500">{session.metadata?.author}</p>
+            <p className="text-xs text-slate-500 flex items-center gap-2">
+              <span>{session.metadata?.author}</span>
+              <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+              <span className="text-slate-400">{session.language}</span>
+            </p>
           </div>
         </div>
 
@@ -394,9 +440,12 @@ function App() {
                 <p className={`text-sm font-medium truncate ${activeSessionId === session.id ? 'text-blue-700' : 'text-slate-700'}`}>
                   {session.metadata?.title || 'Untitled Book'}
                 </p>
-                <p className="text-xs text-slate-400 truncate">
-                  {session.metadata?.author || (session.status === 'parsing' ? 'Processing...' : 'No Author')}
-                </p>
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                   <span className="truncate max-w-[80px]">
+                    {session.metadata?.author || (session.status === 'parsing' ? '...' : 'No Author')}
+                   </span>
+                   <span className="bg-slate-100 px-1 rounded text-[10px]">{session.language.substring(0, 2).toUpperCase()}</span>
+                </div>
               </div>
               <button 
                 onClick={(e) => deleteSession(e, session.id)}

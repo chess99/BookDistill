@@ -17,6 +17,7 @@ export interface BookSession {
   status: 'parsing' | 'analyzing' | 'complete' | 'error';
   message?: string;
   timestamp: number;
+  language: string;
 }
 
 export interface GitHubConfig {
