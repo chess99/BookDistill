@@ -1,107 +1,23 @@
-import React, { useState, useRef, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
-import { parseEpub } from './services/epubService';
-import { BookMetadata, BookSession } from './types';
-import GitHubModal from './components/GitHubModal';
-import { 
-  Upload, 
-  FileText, 
-  Loader2, 
-  Copy, 
-  Download, 
-  Github, 
-  BookOpen,
-  AlertCircle,
-  CheckCircle,
-  Plus,
-  Trash2,
-  Clock,
-  ChevronRight,
-  Languages,
-  Cpu
-} from './components/Icons';
 
-const LANGUAGES = [
-  { code: 'Chinese', label: '中文 (Chinese)' },
-  { code: 'English', label: 'English' },
-  { code: 'Japanese', label: '日本語 (Japanese)' },
-  { code: 'Korean', label: '한국어 (Korean)' },
-  { code: 'Spanish', label: 'Español (Spanish)' },
-  { code: 'French', label: 'Français (French)' },
-  { code: 'German', label: 'Deutsch (German)' },
-];
-
-const MODELS = [
-  { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro (Smart)', shortName: 'Pro 3.0' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fast)', shortName: 'Flash 2.5' },
-];
+import React, { useState, useEffect } from 'react';
+import Sidebar from './components/Sidebar';
+import UploadView from './components/views/UploadView';
+import ProcessingView from './components/views/ProcessingView';
+import ResultView from './components/views/ResultView';
+import ErrorView from './components/views/ErrorView';
+import { useBookSessions } from './hooks/useBookSessions';
+import { useBookProcessor } from './hooks/useBookProcessor';
+import { MODELS, LANGUAGES } from './constants';
 
 function App() {
-  // --- Persistence Initialization ---
-  const [sessions, setSessions] = useState<BookSession[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const saved = localStorage.getItem('book_distill_sessions');
-      if (!saved) return [];
-      const parsed: BookSession[] = JSON.parse(saved);
-      // Sanitize interrupted sessions (e.g. if user refreshed during generation)
-      return parsed.map(s => {
-        if (s.status === 'parsing' || s.status === 'analyzing') {
-          return { 
-            ...s, 
-            status: 'error', 
-            message: 'Process interrupted by page reload. Please try again.' 
-          };
-        }
-        return s;
-      });
-    } catch (e) {
-      console.error("Failed to parse sessions", e);
-      return [];
-    }
-  });
-
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('book_distill_active_id');
-  });
-  
-  // Settings Persistence
+  // --- Global State ---
+  // Language & Model preferences (persisted simply in localStorage)
   const [targetLanguage, setTargetLanguage] = useState<string>(() => 
-    localStorage.getItem('book_distill_pref_lang') || 'Chinese'
+    localStorage.getItem('book_distill_pref_lang') || LANGUAGES[0].code
   );
   const [selectedModel, setSelectedModel] = useState<string>(() => 
     localStorage.getItem('book_distill_pref_model') || MODELS[0].id
   );
-
-  const [dragActive, setDragActive] = useState(false);
-  const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
-  const [copySuccess, setCopySuccess] = useState(false);
-
-  // Gemini Init
-  const apiKey = process.env.API_KEY || ''; 
-
-  // Helpers to get current active session
-  const activeSession = sessions.find(s => s.id === activeSessionId);
-
-  // --- Effects for Persistence ---
-  useEffect(() => {
-    try {
-      localStorage.setItem('book_distill_sessions', JSON.stringify(sessions));
-    } catch (e) {
-      console.error("Local storage full or error", e);
-    }
-  }, [sessions]);
-
-  useEffect(() => {
-    if (activeSessionId) {
-      localStorage.setItem('book_distill_active_id', activeSessionId);
-    } else {
-      localStorage.removeItem('book_distill_active_id');
-    }
-  }, [activeSessionId]);
 
   useEffect(() => {
     localStorage.setItem('book_distill_pref_lang', targetLanguage);
@@ -111,571 +27,64 @@ function App() {
     localStorage.setItem('book_distill_pref_model', selectedModel);
   }, [selectedModel]);
 
-  // Auto-scroll to bottom during streaming
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (activeSession?.status === 'analyzing' && scrollRef.current) {
-      scrollRef.current.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  }, [activeSession?.summary, activeSession?.status]);
+  // --- Logic Hooks ---
+  const { 
+    sessions, 
+    activeSessionId, 
+    setActiveSessionId, 
+    activeSession, 
+    addSession, 
+    updateSession, 
+    deleteSession 
+  } = useBookSessions();
 
-  const createSession = async (file: File) => {
-    if (!file.name.endsWith('.epub')) {
-      alert("Please upload a valid .epub file");
-      return;
-    }
+  const { processBook } = useBookProcessor({ addSession, updateSession });
 
-    const newId = Date.now().toString();
-    const currentLang = targetLanguage;
-    const currentModel = selectedModel;
-
-    const newSession: BookSession = {
-      id: newId,
-      metadata: null,
-      summary: '',
-      status: 'parsing',
-      message: 'Extracting text from EPUB...',
-      timestamp: Date.now(),
-      language: currentLang,
-      model: currentModel
-    };
-
-    setSessions(prev => [newSession, ...prev]);
-    setActiveSessionId(newId);
-
-    try {
-      const { text, title, author } = await parseEpub(file);
-      
-      setSessions(prev => prev.map(s => {
-        if (s.id === newId) {
-          return {
-            ...s,
-            metadata: { title, author, rawTextLength: text.length }
-          };
-        }
-        return s;
-      }));
-
-      // Context Window Check
-      const CHAR_LIMIT = 3500000; // ~875k tokens
-      
-      if (text.length > CHAR_LIMIT) {
-        updateSession(newId, { 
-          status: 'error', 
-          message: `The book is too long (${(text.length/1000000).toFixed(1)}M chars). It exceeds the model's context window.` 
-        });
-        return;
-      }
-
-      await generateSummary(newId, text, title, author, currentLang, currentModel);
-
-    } catch (e: any) {
-      updateSession(newId, { status: 'error', message: `Failed to parse EPUB: ${e.message}` });
-    }
-  };
-
-  const updateSession = (id: string, updates: Partial<BookSession>) => {
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
-  };
-
-  const deleteSession = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    const newSessions = sessions.filter(s => s.id !== id);
-    setSessions(newSessions);
-    if (activeSessionId === id) {
-      setActiveSessionId(null);
-    }
-  };
-
-  const generateSummary = async (sessionId: string, text: string, title: string, author: string, language: string, modelId: string) => {
-    if (!apiKey) {
-      updateSession(sessionId, { status: 'error', message: 'API Key not found in environment variables.' });
-      return;
+  // --- View Rendering Logic ---
+  const renderContent = () => {
+    if (!activeSessionId) {
+      return (
+        <UploadView 
+          targetLanguage={targetLanguage}
+          setTargetLanguage={setTargetLanguage}
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+          onUpload={(file) => processBook(file, targetLanguage, selectedModel)}
+        />
+      );
     }
 
-    updateSession(sessionId, { status: 'analyzing', message: `Sending to ${modelId} for deep analysis in ${language}...` });
+    if (!activeSession) return null;
 
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      
-      const prompt = `
-        You are an expert literary critic and knowledge distillier.
-        Please analyze the following book: "${title}" by ${author}.
-        
-        Your task is to provide a comprehensive knowledge extraction.
-        
-        IMPORTANT: The output must be strictly in ${language}. 
-        Translate all section headers and content to ${language}.
-
-        Structure the response in Markdown format with the following sections:
-        
-        1. **Executive Summary**: A high-level overview of the book's core message.
-        2. **Key Concepts & Ideas**: Detailed explanation of the main concepts presented.
-        3. **Chapter-wise / Thematic Breakdown**: Deep dive into the structure and arguments.
-        4. **Actionable Takeaways / Insights**: What can the reader learn or apply?
-        5. **Notable Quotes**: Significant text from the book.
-
-        Use proper Markdown formatting:
-        - Use # for main title (if you include one)
-        - Use ## for the section headers
-        - Use ### for subsections
-        - Use bullet points and bold text for emphasis
-        - Use > for quotes
-
-        Here is the full text of the book:
-        ${text}
-      `;
-
-      // Use streaming instead of unary call
-      const responseStream = await ai.models.generateContentStream({
-        model: modelId,
-        contents: prompt,
-        config: { temperature: 0.3 }
-      });
-
-      let fullText = '';
-      
-      for await (const chunk of responseStream) {
-        // chunk is GenerateContentResponse
-        const chunkText = chunk.text;
-        if (chunkText) {
-          fullText += chunkText;
-          setSessions(prev => prev.map(s => {
-            if (s.id === sessionId) {
-              return { ...s, summary: fullText, status: 'analyzing' };
-            }
-            return s;
-          }));
-        }
-      }
-
-      updateSession(sessionId, { status: 'complete' });
-
-    } catch (e: any) {
-      console.error(e);
-      updateSession(sessionId, { status: 'error', message: `Gemini API Error: ${e.message}` });
+    if (activeSession.status === 'error') {
+      return (
+        <ErrorView 
+          session={activeSession} 
+          onReset={() => setActiveSessionId(null)} 
+        />
+      );
     }
-  };
 
-  // Drag and Drop Handlers
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
+    if (activeSession.status === 'parsing' || (activeSession.status === 'analyzing' && !activeSession.summary)) {
+      return <ProcessingView session={activeSession} />;
     }
-  };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      createSession(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    if (e.target.files && e.target.files[0]) {
-      createSession(e.target.files[0]);
-    }
-  };
-
-  // Action Handlers
-  const handleCopy = () => {
-    if (!activeSession?.summary) return;
-    navigator.clipboard.writeText(activeSession.summary);
-    setCopySuccess(true);
-    setTimeout(() => setCopySuccess(false), 2000);
-  };
-
-  const handleDownload = () => {
-    if (!activeSession?.summary) return;
-    const element = document.createElement("a");
-    const file = new Blob([activeSession.summary], {type: 'text/markdown'});
-    const filename = activeSession.metadata 
-      ? `${activeSession.metadata.title.replace(/\s+/g, '_')}_distilled.md`
-      : 'summary.md';
-    element.href = URL.createObjectURL(file);
-    element.download = filename;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
-
-  // Render Helpers
-  const renderUploadView = () => (
-    <div 
-      className="flex-1 flex flex-col items-center justify-center p-8 animate-in fade-in duration-500"
-      onDragEnter={handleDrag}
-    >
-      <div className="text-center mb-6">
-        <h2 className="text-3xl font-bold text-slate-900 mb-2">Distill Knowledge from Books</h2>
-        <p className="text-slate-500 max-w-md mx-auto">
-          Upload an EPUB to get a comprehensive AI-generated summary and analysis using the most advanced Gemini models.
-        </p>
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-4 mb-8">
-        {/* Language Selector */}
-        <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 text-slate-500">
-            <Languages size={18} />
-            <span className="text-sm font-medium">Language:</span>
-          </div>
-          <div className="relative">
-            <select
-              value={targetLanguage}
-              onChange={(e) => setTargetLanguage(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm font-bold text-slate-800 focus:ring-0 cursor-pointer py-1 pr-2 rounded-md hover:text-blue-600 transition-colors appearance-none"
-              style={{ textAlignLast: 'center' }}
-            >
-              {LANGUAGES.map(lang => (
-                <option key={lang.code} value={lang.code}>{lang.label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Model Selector */}
-        <div className="flex items-center gap-3 bg-white p-2 px-4 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center gap-2 text-slate-500">
-            <Cpu size={18} />
-            <span className="text-sm font-medium">Model:</span>
-          </div>
-          <div className="relative">
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm font-bold text-slate-800 focus:ring-0 cursor-pointer py-1 pr-2 rounded-md hover:text-blue-600 transition-colors appearance-none"
-              style={{ textAlignLast: 'center' }}
-            >
-              {MODELS.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div 
-        className={`
-          w-full max-w-2xl aspect-[2/1] border-2 border-dashed rounded-3xl flex flex-col items-center justify-center gap-6 transition-all duration-200
-          ${dragActive ? 'border-blue-500 bg-blue-50 scale-[1.02]' : 'border-slate-300 bg-white hover:border-blue-400 hover:bg-slate-50'}
-        `}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-      >
-        <div className="p-5 bg-blue-100 text-blue-600 rounded-full shadow-inner">
-          <Upload size={40} />
-        </div>
-        <div className="text-center space-y-2">
-          <p className="text-lg font-semibold text-slate-800">Drop your EPUB here</p>
-          <input 
-            type="file" 
-            id="epub-upload" 
-            className="hidden" 
-            accept=".epub"
-            onChange={handleChange}
-          />
-          <label 
-            htmlFor="epub-upload"
-            className="inline-block px-6 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 cursor-pointer transition-colors shadow-md hover:shadow-lg"
-          >
-            Browse Files
-          </label>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderProcessingView = (session: BookSession) => (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-8 animate-in fade-in duration-500">
-      <div className="relative">
-        <div className="absolute inset-0 bg-blue-200 rounded-full animate-ping opacity-20"></div>
-        <div className="p-6 bg-white rounded-full shadow-xl relative z-10 border border-slate-100">
-          <Loader2 size={48} className="text-blue-600 animate-spin" />
-        </div>
-      </div>
-      <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-slate-800">
-          {session.status === 'parsing' ? 'Reading Book...' : 'Distilling Knowledge...'}
-        </h2>
-        <p className="text-slate-500">{session.message}</p>
-        <div className="flex gap-2 justify-center mt-2">
-           <div className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-            {MODELS.find(m => m.id === session.model)?.name || session.model}
-          </div>
-          <div className="text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-            {session.language}
-          </div>
-        </div>
-        {session.metadata && (
-          <div className="mt-6 p-4 bg-white rounded-xl border border-slate-200 shadow-sm inline-flex items-center gap-4 text-left max-w-md">
-             <div className="p-2 bg-slate-50 rounded-lg">
-               <BookOpen size={24} className="text-slate-400"/>
-             </div>
-             <div>
-               <p className="font-bold text-slate-800">{session.metadata.title}</p>
-               <p className="text-xs text-slate-500">{session.metadata.author}</p>
-             </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
-  const renderErrorView = (session: BookSession) => (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-in fade-in">
-      <div className="p-4 bg-red-50 text-red-500 rounded-full mb-6 border border-red-100">
-        <AlertCircle size={48} />
-      </div>
-      <h2 className="text-2xl font-bold text-slate-800 mb-2">Analysis Failed</h2>
-      <p className="text-slate-600 max-w-md mb-8">{session.message}</p>
-      <button 
-        onClick={() => setActiveSessionId(null)}
-        className="px-6 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
-      >
-        Try Another Book
-      </button>
-    </div>
-  );
-
-  const renderResultView = (session: BookSession) => {
-    const isGenerating = session.status !== 'complete';
-
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
-        {/* Result Header */}
-        <div className="flex-none bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm sticky top-0 z-10">
-          <div className="flex items-center gap-4">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-               <BookOpen size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-bold text-slate-900 leading-tight">{session.metadata?.title || 'Untitled Book'}</h2>
-                {isGenerating && (
-                   <span className="flex h-2 w-2 relative">
-                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                     <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                   </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-500 flex items-center gap-2">
-                <span>{session.metadata?.author}</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                <span className="text-slate-400">{session.language}</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                <span className="text-blue-500 font-medium">
-                  {MODELS.find(m => m.id === session.model)?.shortName || 'Unknown Model'}
-                </span>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={handleCopy}
-              disabled={isGenerating}
-              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                isGenerating 
-                  ? 'text-slate-300 cursor-not-allowed' 
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              title={isGenerating ? "Wait for completion" : "Copy Markdown"}
-            >
-              {copySuccess ? <CheckCircle size={18} className="text-green-600"/> : <Copy size={18} />}
-              <span className="hidden sm:inline">Copy</span>
-            </button>
-            
-            <button 
-              onClick={handleDownload}
-              disabled={isGenerating}
-              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                isGenerating 
-                  ? 'text-slate-300 cursor-not-allowed' 
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              title={isGenerating ? "Wait for completion" : "Download Markdown"}
-            >
-              <Download size={18} />
-              <span className="hidden sm:inline">Download</span>
-            </button>
-
-            <div className="h-6 w-px bg-slate-200 mx-1"></div>
-
-            <button 
-              onClick={() => setIsGitHubModalOpen(true)}
-              disabled={isGenerating}
-              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg shadow-sm transition-all active:scale-95 ${
-                isGenerating
-                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
-                  : 'bg-slate-900 text-white hover:bg-slate-800'
-              }`}
-              title={isGenerating ? "Wait for completion" : "Save to GitHub"}
-            >
-              <Github size={18} />
-              <span>Save to GitHub</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Result Content */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12" ref={scrollRef}>
-          <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 min-h-full">
-             <div className="prose prose-slate max-w-none">
-               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  h1: ({node, ...props}) => <h1 className="text-3xl font-extrabold text-slate-900 mb-6 pb-2 border-b border-slate-100" {...props} />,
-                  h2: ({node, ...props}) => <h2 className="text-2xl font-bold text-slate-800 mt-10 mb-4 flex items-center gap-2" {...props} />,
-                  h3: ({node, ...props}) => <h3 className="text-xl font-bold text-slate-700 mt-8 mb-3" {...props} />,
-                  p: ({node, ...props}) => <p className="text-slate-600 leading-relaxed mb-4" {...props} />,
-                  ul: ({node, ...props}) => <ul className="list-disc list-outside ml-6 space-y-2 text-slate-600 mb-6" {...props} />,
-                  ol: ({node, ...props}) => <ol className="list-decimal list-outside ml-6 space-y-2 text-slate-600 mb-6" {...props} />,
-                  li: ({node, ...props}) => <li className="pl-1" {...props} />,
-                  blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-blue-500 bg-blue-50 p-4 rounded-r-lg my-6 text-slate-700 italic" {...props} />,
-                  code: ({node, ...props}) => <code className="bg-slate-100 text-red-500 px-1 py-0.5 rounded text-sm font-mono" {...props} />,
-                  pre: ({node, ...props}) => <pre className="bg-slate-900 text-slate-50 p-4 rounded-lg overflow-x-auto my-6" {...props} />,
-                  strong: ({node, ...props}) => <strong className="font-bold text-slate-900" {...props} />,
-                  a: ({node, ...props}) => <a className="text-blue-600 hover:underline" {...props} />,
-                  hr: ({node, ...props}) => <hr className="my-8 border-slate-200" {...props} />,
-                }}
-               >
-                 {session.summary}
-               </ReactMarkdown>
-             </div>
-             {/* Blinking Cursor for streaming effect */}
-             {isGenerating && (
-               <div className="inline-block w-2 h-5 bg-blue-500 animate-pulse ml-1 align-middle"></div>
-             )}
-          </div>
-        </div>
-      </div>
-    );
+    return <ResultView session={activeSession} />;
   };
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans">
-      
-      {/* Left Sidebar */}
-      <div className="w-72 bg-white border-r border-slate-200 flex-col hidden md:flex z-20">
-        <div className="p-4 border-b border-slate-100 flex items-center gap-2">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-blue-200 shadow-lg">
-            <BookOpen size={18} />
-          </div>
-          <span className="font-bold text-lg tracking-tight">BookDistill</span>
-        </div>
-
-        <div className="p-4">
-          <button 
-            onClick={() => setActiveSessionId(null)}
-            className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-3 px-4 rounded-xl hover:bg-slate-800 transition-all shadow-md shadow-slate-200 font-medium"
-          >
-            <Plus size={18} />
-            <span>New Extraction</span>
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
-          <div className="px-3 py-2 text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-             <Clock size={12} /> History
-          </div>
-          
-          {sessions.length === 0 && (
-            <div className="px-4 py-8 text-center text-sm text-slate-400 italic">
-              No books processed yet.
-            </div>
-          )}
-
-          {sessions.map(session => (
-            <div 
-              key={session.id}
-              onClick={() => setActiveSessionId(session.id)}
-              className={`
-                group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all border
-                ${activeSessionId === session.id 
-                  ? 'bg-blue-50 border-blue-100' 
-                  : 'bg-white border-transparent hover:bg-slate-50 hover:border-slate-100'}
-              `}
-            >
-              <div className={`
-                mt-1 min-w-[24px] h-6 flex items-center justify-center rounded
-                ${session.status === 'complete' ? 'text-green-500' : session.status === 'error' ? 'text-red-500' : 'text-blue-500'}
-              `}>
-                {session.status === 'parsing' || (session.status === 'analyzing' && !session.summary) ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : session.status === 'error' ? (
-                  <AlertCircle size={14} />
-                ) : (
-                  <FileText size={14} />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium truncate ${activeSessionId === session.id ? 'text-blue-700' : 'text-slate-700'}`}>
-                  {session.metadata?.title || 'Untitled Book'}
-                </p>
-                <div className="flex items-center justify-between text-xs text-slate-400 mt-1">
-                   <div className="flex items-center gap-1">
-                     <span className="truncate max-w-[60px]">
-                      {session.metadata?.author || (session.status === 'parsing' ? '...' : 'No Author')}
-                     </span>
-                   </div>
-                   <div className="flex items-center gap-1 opacity-70">
-                     <span className="bg-slate-100 px-1 rounded text-[10px] uppercase">{session.language.substring(0, 2)}</span>
-                     <span className="text-[10px] text-blue-500">{MODELS.find(m => m.id === session.model)?.shortName?.split(' ')[1] || 'AI'}</span>
-                   </div>
-                </div>
-              </div>
-              <button 
-                onClick={(e) => deleteSession(e, session.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-all"
-                title="Remove"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-        
-        <div className="p-4 border-t border-slate-100 text-center">
-          <p className="text-xs text-slate-400">Powered by Gemini 2.5 & 3.0</p>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50/50">
-        {!activeSessionId && renderUploadView()}
-        
-        {activeSessionId && activeSession && (
-          <>
-            {/* Show loader only if parsing OR (analyzing but no text received yet) */}
-            {(activeSession.status === 'parsing' || (activeSession.status === 'analyzing' && !activeSession.summary)) && renderProcessingView(activeSession)}
-            
-            {activeSession.status === 'error' && renderErrorView(activeSession)}
-            
-            {/* Show result if complete OR (analyzing AND has text) */}
-            {((activeSession.status === 'analyzing' && activeSession.summary) || activeSession.status === 'complete') && renderResultView(activeSession)}
-          </>
-        )}
-      </main>
-
-      {/* Global Modals */}
-      <GitHubModal 
-        isOpen={isGitHubModalOpen} 
-        onClose={() => setIsGitHubModalOpen(false)} 
-        contentToSave={activeSession?.summary || ''}
-        defaultFilename={activeSession?.metadata ? `${activeSession.metadata.title.replace(/\s+/g, '_').toLowerCase()}_summary.md` : 'summary.md'}
+      <Sidebar 
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={setActiveSessionId}
+        onDeleteSession={deleteSession}
+        onNewSession={() => setActiveSessionId(null)}
       />
+
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50/50">
+        {renderContent()}
+      </main>
     </div>
   );
 }
