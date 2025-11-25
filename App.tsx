@@ -39,21 +39,77 @@ const MODELS = [
 ];
 
 function App() {
-  const [sessions, setSessions] = useState<BookSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // --- Persistence Initialization ---
+  const [sessions, setSessions] = useState<BookSession[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem('book_distill_sessions');
+      if (!saved) return [];
+      const parsed: BookSession[] = JSON.parse(saved);
+      // Sanitize interrupted sessions (e.g. if user refreshed during generation)
+      return parsed.map(s => {
+        if (s.status === 'parsing' || s.status === 'analyzing') {
+          return { 
+            ...s, 
+            status: 'error', 
+            message: 'Process interrupted by page reload. Please try again.' 
+          };
+        }
+        return s;
+      });
+    } catch (e) {
+      console.error("Failed to parse sessions", e);
+      return [];
+    }
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('book_distill_active_id');
+  });
+  
+  // Settings Persistence
+  const [targetLanguage, setTargetLanguage] = useState<string>(() => 
+    localStorage.getItem('book_distill_pref_lang') || 'Chinese'
+  );
+  const [selectedModel, setSelectedModel] = useState<string>(() => 
+    localStorage.getItem('book_distill_pref_model') || MODELS[0].id
+  );
+
   const [dragActive, setDragActive] = useState(false);
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
-  
-  // Settings State
-  const [targetLanguage, setTargetLanguage] = useState<string>('Chinese');
-  const [selectedModel, setSelectedModel] = useState<string>(MODELS[0].id); // Default to Gemini 3.0 Pro
 
   // Gemini Init
   const apiKey = process.env.API_KEY || ''; 
 
   // Helpers to get current active session
   const activeSession = sessions.find(s => s.id === activeSessionId);
+
+  // --- Effects for Persistence ---
+  useEffect(() => {
+    try {
+      localStorage.setItem('book_distill_sessions', JSON.stringify(sessions));
+    } catch (e) {
+      console.error("Local storage full or error", e);
+    }
+  }, [sessions]);
+
+  useEffect(() => {
+    if (activeSessionId) {
+      localStorage.setItem('book_distill_active_id', activeSessionId);
+    } else {
+      localStorage.removeItem('book_distill_active_id');
+    }
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    localStorage.setItem('book_distill_pref_lang', targetLanguage);
+  }, [targetLanguage]);
+
+  useEffect(() => {
+    localStorage.setItem('book_distill_pref_model', selectedModel);
+  }, [selectedModel]);
 
   // Auto-scroll to bottom during streaming
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -127,7 +183,8 @@ function App() {
 
   const deleteSession = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    setSessions(prev => prev.filter(s => s.id !== id));
+    const newSessions = sessions.filter(s => s.id !== id);
+    setSessions(newSessions);
     if (activeSessionId === id) {
       setActiveSessionId(null);
     }
