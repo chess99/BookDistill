@@ -152,6 +152,17 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
                 strong: ({node, ...props}) => <strong className="font-bold text-slate-900" {...props} />,
                 a: ({node, ...props}) => <a className="text-blue-600 hover:underline" {...props} />,
                 hr: ({node, ...props}) => <hr className="my-8 border-slate-200" {...props} />,
+                // Table support
+                table: ({node, ...props}) => (
+                  <div className="overflow-x-auto my-8 rounded-lg border border-slate-200 shadow-sm">
+                    <table className="min-w-full divide-y divide-slate-200" {...props} />
+                  </div>
+                ),
+                thead: ({node, ...props}) => <thead className="bg-slate-50" {...props} />,
+                tbody: ({node, ...props}) => <tbody className="bg-white divide-y divide-slate-200" {...props} />,
+                tr: ({node, ...props}) => <tr className="hover:bg-slate-50 transition-colors" {...props} />,
+                th: ({node, ...props}) => <th className="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider" {...props} />,
+                td: ({node, ...props}) => <td className="px-6 py-4 whitespace-normal text-sm text-slate-600 leading-relaxed" {...props} />,
               }}
              >
                {session.summary}
