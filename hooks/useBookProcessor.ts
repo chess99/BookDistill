@@ -69,38 +69,30 @@ export const useBookProcessor = ({ addSession, updateSession }: UseBookProcessor
     try {
       const ai = new GoogleGenAI({ apiKey });
       
-      const prompt = `
-        You are an expert literary critic and knowledge distillier.
-        Please analyze the following book: "${title}" by ${author}.
-        
-        Your task is to provide a comprehensive knowledge extraction.
-        
-        IMPORTANT: The output must be strictly in ${language}. 
-        Translate all section headers and content to ${language}.
-
-        Structure the response in Markdown format with the following sections:
-        
-        1. **Executive Summary**: A high-level overview of the book's core message.
-        2. **Key Concepts & Ideas**: Detailed explanation of the main concepts presented.
-        3. **Chapter-wise / Thematic Breakdown**: Deep dive into the structure and arguments.
-        4. **Actionable Takeaways / Insights**: What can the reader learn or apply?
-        5. **Notable Quotes**: Significant text from the book.
-
-        Use proper Markdown formatting:
-        - Use # for main title (if you include one)
-        - Use ## for the section headers
-        - Use ### for subsections
-        - Use bullet points and bold text for emphasis
-        - Use > for quotes
-
-        Here is the full text of the book:
-        ${text}
-      `;
+      // Minimalist System Instruction matching AI Studio experience
+      // We only strictly enforce Language and Markdown format.
+      // We let the model decide the structure ("Detailed knowledge extraction").
+      const systemInstruction = `
+        Expert Book Distiller.
+        Task: Extract detailed knowledge and insights from the provided book.
+        Constraint 1: Output MUST be in ${language} language.
+        Constraint 2: Use clean Markdown formatting.
+      `.trim();
 
       const responseStream = await ai.models.generateContentStream({
         model: modelId,
-        contents: prompt,
-        config: { temperature: 0.3 }
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: `Title: ${title}\nAuthor: ${author}\n\n${text}` }
+            ]
+          }
+        ],
+        config: { 
+          temperature: 0.3,
+          systemInstruction: systemInstruction
+        }
       });
 
       let fullText = '';
