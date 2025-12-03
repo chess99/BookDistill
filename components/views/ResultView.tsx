@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -10,7 +9,8 @@ import {
   Download, 
   Github, 
   BookOpen, 
-  CheckCircle 
+  CheckCircle,
+  ArrowDown 
 } from '../Icons';
 
 interface ResultViewProps {
@@ -20,19 +20,52 @@ interface ResultViewProps {
 const ResultView: React.FC<ResultViewProps> = ({ session }) => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState(false);
+  
+  // Smart Scroll State
+  const [isAutoScroll, setIsAutoScroll] = useState(true);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   
-  const isGenerating = session.status !== 'complete';
+  const isGenerating = session.status !== 'complete' && session.status !== 'error';
 
-  // Auto-scroll logic
+  // Handle Scroll Logic
+  const handleScroll = () => {
+    if (!scrollRef.current) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    // We consider "at bottom" if within 100px of the end
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
+
+    if (isAtBottom) {
+      setIsAutoScroll(true);
+      setShowScrollButton(false);
+    } else {
+      setIsAutoScroll(false);
+      setShowScrollButton(true);
+    }
+  };
+
+  // Auto-scroll Effect
   useEffect(() => {
-    if (session.status === 'analyzing' && scrollRef.current) {
+    if (isAutoScroll && isGenerating && scrollRef.current) {
       scrollRef.current.scrollTo({
         top: scrollRef.current.scrollHeight,
         behavior: 'smooth'
       });
     }
-  }, [session.summary, session.status]);
+  }, [session.summary, isAutoScroll, isGenerating]);
+
+  // Manual Scroll to Bottom Action
+  const scrollToBottom = () => {
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: 'smooth'
+    });
+    // Re-enable auto-scroll immediately
+    setIsAutoScroll(true);
+    setShowScrollButton(false);
+  };
 
   const handleCopy = () => {
     if (!session.summary) return;
@@ -56,7 +89,7 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+    <div className="flex-1 flex flex-col overflow-hidden bg-slate-50 relative">
       {/* Result Header */}
       <div className="flex-none bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm sticky top-0 z-10">
         <div className="flex items-center gap-4">
@@ -65,16 +98,16 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-bold text-slate-900 leading-tight">{session.metadata?.title || 'Untitled Book'}</h2>
+              <h2 className="font-bold text-slate-900 leading-tight truncate max-w-[200px] sm:max-w-md">{session.metadata?.title || 'Untitled Book'}</h2>
               {isGenerating && (
-                 <span className="flex h-2 w-2 relative">
+                 <span className="flex h-2 w-2 relative" title="Generating content...">
                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                    <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
                  </span>
               )}
             </div>
             <p className="text-xs text-slate-500 flex items-center gap-2">
-              <span>{session.metadata?.author}</span>
+              <span className="truncate max-w-[150px]">{session.metadata?.author}</span>
               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
               <span className="text-slate-400">{session.language}</span>
               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
@@ -88,13 +121,13 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
         <div className="flex items-center gap-2">
           <button 
             onClick={handleCopy}
-            disabled={isGenerating}
+            disabled={!session.summary}
             className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-              isGenerating 
+              !session.summary 
                 ? 'text-slate-300 cursor-not-allowed' 
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
-            title={isGenerating ? "Wait for completion" : "Copy Markdown"}
+            title="Copy Markdown"
           >
             {copySuccess ? <CheckCircle size={18} className="text-green-600"/> : <Copy size={18} />}
             <span className="hidden sm:inline">Copy</span>
@@ -102,13 +135,13 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
           
           <button 
             onClick={handleDownload}
-            disabled={isGenerating}
+            disabled={!session.summary}
             className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-              isGenerating 
+              !session.summary 
                 ? 'text-slate-300 cursor-not-allowed' 
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
-            title={isGenerating ? "Wait for completion" : "Download Markdown"}
+            title="Download Markdown"
           >
             <Download size={18} />
             <span className="hidden sm:inline">Download</span>
@@ -118,13 +151,13 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
 
           <button 
             onClick={() => setIsGitHubModalOpen(true)}
-            disabled={isGenerating}
+            disabled={!session.summary}
             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg shadow-sm transition-all active:scale-95 ${
-              isGenerating
+              !session.summary
                 ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
                 : 'bg-slate-900 text-white hover:bg-slate-800'
             }`}
-            title={isGenerating ? "Wait for completion" : "Save to GitHub"}
+            title="Save to GitHub"
           >
             <Github size={18} />
             <span>Save to GitHub</span>
@@ -133,7 +166,11 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
       </div>
 
       {/* Result Content */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12" ref={scrollRef}>
+      <div 
+        className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12 scroll-smooth" 
+        ref={scrollRef}
+        onScroll={handleScroll}
+      >
         <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-8 md:p-12 min-h-full">
            <div className="prose prose-slate max-w-none">
              <ReactMarkdown
@@ -168,12 +205,35 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
                {session.summary}
              </ReactMarkdown>
            </div>
+           
            {/* Blinking Cursor for streaming effect */}
            {isGenerating && (
-             <div className="inline-block w-2 h-5 bg-blue-500 animate-pulse ml-1 align-middle"></div>
+             <div className="mt-4 flex items-center gap-2 text-slate-400 animate-pulse">
+               <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+               <span className="text-xs font-medium">Gemini is writing...</span>
+             </div>
            )}
         </div>
       </div>
+
+      {/* Floating Scroll Button */}
+      {showScrollButton && (
+        <div className="absolute bottom-8 left-0 right-0 flex justify-center z-20 pointer-events-none">
+          <button 
+            onClick={scrollToBottom}
+            className={`
+              pointer-events-auto shadow-lg border border-slate-200
+              flex items-center gap-2 px-4 py-2 rounded-full 
+              text-sm font-semibold transition-all duration-300 transform translate-y-0
+              ${isGenerating ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-white text-slate-700 hover:bg-slate-50'}
+            `}
+          >
+            {isGenerating && <span className="animate-pulse">●</span>}
+            {isGenerating ? "New content" : "Scroll to bottom"}
+            <ArrowDown size={16} />
+          </button>
+        </div>
+      )}
 
       <GitHubModal 
         isOpen={isGitHubModalOpen} 

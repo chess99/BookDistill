@@ -16,7 +16,8 @@ import {
   ChevronRight,
   Clock,
   Languages,
-  Cpu
+  Cpu,
+  ArrowDown
 } from 'lucide-react';
 
 export { 
@@ -36,5 +37,6 @@ export {
   ChevronRight,
   Clock,
   Languages,
-  Cpu
+  Cpu,
+  ArrowDown
 };
