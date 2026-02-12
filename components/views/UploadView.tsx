@@ -8,6 +8,8 @@ interface UploadViewProps {
   setTargetLanguage: (lang: string) => void;
   selectedModel: string;
   setSelectedModel: (model: string) => void;
+  geminiApiKey: string;
+  setGeminiApiKey: (apiKey: string) => void;
   onUpload: (file: File) => void;
 }
 
@@ -16,9 +18,12 @@ const UploadView: React.FC<UploadViewProps> = ({
   setTargetLanguage,
   selectedModel,
   setSelectedModel,
+  geminiApiKey,
+  setGeminiApiKey,
   onUpload
 }) => {
   const [dragActive, setDragActive] = useState(false);
+  const hasApiKey = geminiApiKey.trim().length > 0;
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -34,6 +39,7 @@ const UploadView: React.FC<UploadViewProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
+    if (!hasApiKey) return;
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       onUpload(e.dataTransfer.files[0]);
     }
@@ -41,6 +47,7 @@ const UploadView: React.FC<UploadViewProps> = ({
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
+    if (!hasApiKey) return;
     if (e.target.files && e.target.files[0]) {
       onUpload(e.target.files[0]);
     }
@@ -100,6 +107,24 @@ const UploadView: React.FC<UploadViewProps> = ({
         </div>
       </div>
 
+      <div className="w-full max-w-2xl mb-6">
+        <label htmlFor="gemini-api-key" className="block text-sm font-medium text-slate-700 mb-2">
+          Gemini API Key
+        </label>
+        <input
+          id="gemini-api-key"
+          type="password"
+          value={geminiApiKey}
+          onChange={(e) => setGeminiApiKey(e.target.value)}
+          placeholder="Paste your Gemini API key (stored in this browser)"
+          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          autoComplete="off"
+        />
+        <p className="mt-2 text-xs text-slate-500">
+          Stored in localStorage on this device only. Do not use a high-privilege key on shared machines.
+        </p>
+      </div>
+
       <div 
         className={`
           w-full max-w-2xl aspect-[2/1] border-2 border-dashed rounded-3xl flex flex-col items-center justify-center gap-6 transition-all duration-200
@@ -120,14 +145,22 @@ const UploadView: React.FC<UploadViewProps> = ({
             id="epub-upload" 
             className="hidden" 
             accept=".epub"
+            disabled={!hasApiKey}
             onChange={handleChange}
           />
           <label 
             htmlFor="epub-upload"
-            className="inline-block px-6 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 cursor-pointer transition-colors shadow-md hover:shadow-lg"
+            className={`inline-block px-6 py-2 text-sm font-medium rounded-lg transition-colors shadow-md hover:shadow-lg ${
+              hasApiKey
+                ? 'bg-slate-900 text-white hover:bg-slate-800 cursor-pointer'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+            }`}
           >
             Browse Files
           </label>
+          {!hasApiKey && (
+            <p className="text-xs text-amber-600">Please enter your Gemini API key before uploading.</p>
+          )}
         </div>
       </div>
     </div>

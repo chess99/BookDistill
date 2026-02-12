@@ -7,10 +7,10 @@ import { BookSession } from '../types';
 interface UseBookProcessorProps {
   addSession: (session: BookSession) => void;
   updateSession: (id: string, updates: Partial<BookSession>) => void;
+  getApiKey: () => string;
 }
 
-export const useBookProcessor = ({ addSession, updateSession }: UseBookProcessorProps) => {
-  const apiKey = process.env.API_KEY || '';
+export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBookProcessorProps) => {
 
   const processBook = async (file: File, language: string, modelId: string) => {
     if (!file.name.endsWith('.epub')) {
@@ -59,8 +59,9 @@ export const useBookProcessor = ({ addSession, updateSession }: UseBookProcessor
   };
 
   const generateSummary = async (sessionId: string, text: string, title: string, author: string, language: string, modelId: string) => {
+    const apiKey = getApiKey().trim();
     if (!apiKey) {
-      updateSession(sessionId, { status: 'error', message: 'API Key not found in environment variables.' });
+      updateSession(sessionId, { status: 'error', message: 'Gemini API Key is required. Please add it in the upload page settings.' });
       return;
     }
 

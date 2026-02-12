@@ -18,6 +18,9 @@ function App() {
   const [selectedModel, setSelectedModel] = useState<string>(() => 
     localStorage.getItem('book_distill_pref_model') || MODELS[0].id
   );
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() =>
+    localStorage.getItem('book_distill_gemini_api_key') || ''
+  );
 
   useEffect(() => {
     localStorage.setItem('book_distill_pref_lang', targetLanguage);
@@ -26,6 +29,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('book_distill_pref_model', selectedModel);
   }, [selectedModel]);
+
+  useEffect(() => {
+    localStorage.setItem('book_distill_gemini_api_key', geminiApiKey);
+  }, [geminiApiKey]);
 
   // --- Logic Hooks ---
   const { 
@@ -38,7 +45,11 @@ function App() {
     deleteSession 
   } = useBookSessions();
 
-  const { processBook } = useBookProcessor({ addSession, updateSession });
+  const { processBook } = useBookProcessor({
+    addSession,
+    updateSession,
+    getApiKey: () => geminiApiKey
+  });
 
   // --- View Rendering Logic ---
   const renderContent = () => {
@@ -49,6 +60,8 @@ function App() {
           setTargetLanguage={setTargetLanguage}
           selectedModel={selectedModel}
           setSelectedModel={setSelectedModel}
+          geminiApiKey={geminiApiKey}
+          setGeminiApiKey={setGeminiApiKey}
           onUpload={(file) => processBook(file, targetLanguage, selectedModel)}
         />
       );
