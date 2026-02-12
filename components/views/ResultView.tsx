@@ -4,13 +4,14 @@ import remarkGfm from 'remark-gfm';
 import { BookSession } from '../../types';
 import { MODELS } from '../../constants';
 import GitHubModal from '../GitHubModal';
-import { 
-  Copy, 
-  Download, 
-  Github, 
-  BookOpen, 
+import { generateBookFilename } from '../../utils/filenameUtils';
+import {
+  Copy,
+  Download,
+  Github,
+  BookOpen,
   CheckCircle,
-  ArrowDown 
+  ArrowDown
 } from '../Icons';
 
 interface ResultViewProps {
@@ -28,13 +29,13 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
   
   const isGenerating = session.status !== 'complete' && session.status !== 'error';
 
-  const sanitizeFilenamePart = (value: string, fallback: string) => {
-    const sanitized = value
-      .trim()
-      .replace(/[\\/:*?"<>|]/g, '')
-      .replace(/\s+/g, '_');
-    return sanitized || fallback;
-  };
+  // 生成规范的文件名
+  const filename = session.metadata
+    ? generateBookFilename(
+        session.metadata.author || '',
+        session.metadata.title || ''
+      )
+    : 'unknown-author-untitled.md';
 
   // Handle Scroll Logic
   const handleScroll = () => {
@@ -86,9 +87,6 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
     if (!session.summary) return;
     const element = document.createElement("a");
     const file = new Blob([session.summary], {type: 'text/markdown'});
-    const filename = session.metadata
-      ? `${sanitizeFilenamePart(session.metadata.author || 'unknown-author', 'unknown-author')}-${sanitizeFilenamePart(session.metadata.title || 'untitled', 'untitled')}.md`
-      : 'unknown-author-untitled.md';
     element.href = URL.createObjectURL(file);
     element.download = filename;
     document.body.appendChild(element);
@@ -243,15 +241,11 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
         </div>
       )}
 
-      <GitHubModal 
-        isOpen={isGitHubModalOpen} 
-        onClose={() => setIsGitHubModalOpen(false)} 
+      <GitHubModal
+        isOpen={isGitHubModalOpen}
+        onClose={() => setIsGitHubModalOpen(false)}
         contentToSave={session.summary || ''}
-        defaultFilename={
-          session.metadata
-            ? `${sanitizeFilenamePart(session.metadata.author || 'unknown-author', 'unknown-author')}-${sanitizeFilenamePart(session.metadata.title || 'untitled', 'untitled')}.md`
-            : 'unknown-author-untitled.md'
-        }
+        defaultFilename={filename}
       />
     </div>
   );
