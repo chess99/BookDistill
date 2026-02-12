@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { BookSession } from '../../types';
 import { MODELS } from '../../constants';
 import GitHubModal from '../GitHubModal';
-import { generateBookFilename } from '../../utils/filenameUtils';
+import { generateBookFilename, generateMarkdownWithFrontmatter } from '../../utils/filenameUtils';
 import {
   Copy,
   Download,
@@ -36,6 +36,16 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
         session.metadata.title || ''
       )
     : 'unknown-author-untitled.md';
+
+  // 生成带 frontmatter 的内容
+  const contentWithFrontmatter = session.metadata && session.summary
+    ? generateMarkdownWithFrontmatter(
+        session.summary,
+        session.metadata.author || '',
+        session.metadata.title || '',
+        session.metadata.tags
+      )
+    : session.summary;
 
   // Handle Scroll Logic
   const handleScroll = () => {
@@ -77,16 +87,16 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
   };
 
   const handleCopy = () => {
-    if (!session.summary) return;
-    navigator.clipboard.writeText(session.summary);
+    if (!contentWithFrontmatter) return;
+    navigator.clipboard.writeText(contentWithFrontmatter);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
   const handleDownload = () => {
-    if (!session.summary) return;
+    if (!contentWithFrontmatter) return;
     const element = document.createElement("a");
-    const file = new Blob([session.summary], {type: 'text/markdown'});
+    const file = new Blob([contentWithFrontmatter], {type: 'text/markdown'});
     element.href = URL.createObjectURL(file);
     element.download = filename;
     document.body.appendChild(element);
@@ -244,7 +254,7 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
       <GitHubModal
         isOpen={isGitHubModalOpen}
         onClose={() => setIsGitHubModalOpen(false)}
-        contentToSave={session.summary || ''}
+        contentToSave={contentWithFrontmatter || ''}
         defaultFilename={filename}
       />
     </div>

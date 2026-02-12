@@ -3,6 +3,10 @@
  * 符合 ai-reading 项目的文件名约定
  */
 
+// 导出 slug 生成函数
+import { generateBookSlug } from './slugGenerator';
+export { generateBookSlug };
+
 /**
  * 规范化作者名称
  * - 移除国籍前缀 【英】【美】等
@@ -74,20 +78,22 @@ export function generateBookFilename(author: string, title: string): string {
  * 生成带 frontmatter 的 Markdown 内容
  *
  * @param content 原始内容
+ * @param author 作者名称
+ * @param title 书名
  * @param tags 可选的标签数组
  * @returns 带 frontmatter 的完整内容
  */
 export function generateMarkdownWithFrontmatter(
   content: string,
+  author: string,
+  title: string,
   tags?: string[]
 ): string {
-  if (!tags || tags.length === 0) {
-    // 没有标签时，不添加 frontmatter
-    return content;
-  }
+  const slug = generateBookSlug(author, title);
 
   const frontmatter = `---
-tags: [${tags.join(', ')}]
+slug: ${slug}
+${tags && tags.length > 0 ? `tags: [${tags.join(', ')}]` : ''}
 ---
 
 `;
