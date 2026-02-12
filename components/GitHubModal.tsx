@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Github, Loader2, CheckCircle, AlertCircle, Save } from './Icons';
-import { validateToken, getUserRepos, getRepoFolders, saveFileToRepo } from '../services/githubService';
+import { checkFileExistsInRepo, validateToken, getUserRepos, getRepoFolders, saveFileToRepo } from '../services/githubService';
 import { GitHubRepo } from '../types';
 
 const GH_TOKEN_KEY = 'gh_token';
@@ -54,6 +54,7 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
   
   const [loading, setLoading] = useState(false);
   const [loadingFolders, setLoadingFolders] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successUrl, setSuccessUrl] = useState<string | null>(null);
 
@@ -62,6 +63,7 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
     if (isOpen) {
       setSuccessUrl(null);
       setError(null);
+      setConfirmOverwrite(false);
       setFilename(defaultFilename);
       if (token && !username) {
         handleValidateToken();
@@ -143,8 +145,19 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
     setError(null);
     try {
       const [owner, repoName] = selectedRepo.split('/');
+      if (!confirmOverwrite) {
+        const exists = await checkFileExistsInRepo(token, owner, repoName, finalPath, filename.trim());
+        if (exists) {
+          setConfirmOverwrite(true);
+          setError('A file with the same name already exists. Click "Confirm Overwrite" to replace it.');
+          setLoading(false);
+          return;
+        }
+      }
+
       const htmlUrl = await saveFileToRepo(token, owner, repoName, finalPath, filename.trim(), contentToSave);
       setSuccessUrl(htmlUrl);
+      setConfirmOverwrite(false);
     } catch (e: any) {
       setError(e.message || "Failed to save.");
     } finally {
@@ -160,6 +173,10 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
       newPath: newFolderPath.trim()
     });
   }, [selectedRepo, pathMode, selectedFolderPath, newFolderPath]);
+
+  useEffect(() => {
+    setConfirmOverwrite(false);
+  }, [selectedRepo, pathMode, selectedFolderPath, newFolderPath, filename]);
 
   if (!isOpen) return null;
 
@@ -335,9 +352,20 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
                   <button 
                     onClick={handleSave}
                     disabled={loading}
-                    className="w-full mt-4 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-blue-200 transition-all"
+                    className={`w-full mt-4 py-3 text-white font-medium rounded-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-all ${
+                      confirmOverwrite
+                        ? 'bg-amber-600 hover:bg-amber-700 shadow-lg shadow-amber-200'
+                        : 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200'
+                    }`}
                   >
-                    {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <><Save className="w-5 h-5" /> Commit to GitHub</>}
+                    {loading ? (
+                      <Loader2 className="animate-spin w-5 h-5" />
+                    ) : (
+                      <>
+                        <Save className="w-5 h-5" />
+                        {confirmOverwrite ? 'Confirm Overwrite' : 'Commit to GitHub'}
+                      </>
+                    )}
                   </button>
                 </div>
               )}

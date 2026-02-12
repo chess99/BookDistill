@@ -66,6 +66,32 @@ export const getRepoFolders = async (
   return folders;
 };
 
+export const checkFileExistsInRepo = async (
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  filename: string
+): Promise<boolean> => {
+  const normalizedPath = path.trim().replace(/^\/+|\/+$/g, '');
+  const cleanPath = normalizedPath ? `${normalizedPath}/` : '';
+  const fullPath = `${cleanPath}${filename}`;
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${fullPath}`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (res.status === 404) return false;
+  if (res.ok) return true;
+
+  const err = await res.json();
+  throw new Error(err.message || 'Failed to check existing file');
+};
+
 export const saveFileToRepo = async (
   token: string,
   owner: string,
