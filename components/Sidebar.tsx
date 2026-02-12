@@ -106,7 +106,43 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         ))}
       </div>
-      
+
+      {/* External Link */}
+      <div className="px-4 pb-3">
+        <a
+          href="https://cearl.cc/ai-reading/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-white hover:border-blue-300 hover:shadow-md transition-all group"
+        >
+          <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600 group-hover:bg-blue-100 transition-colors">
+            <BookOpen size={16} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">
+              AI 阅读
+            </p>
+            <p className="text-xs text-slate-400">
+              查看已发布书籍
+            </p>
+          </div>
+          <svg
+            className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors"
+            viewBox="0 0 12 12"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M10.5 1.5L1.5 10.5M10.5 1.5H4.5M10.5 1.5V7.5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </a>
+      </div>
+
       <div className="p-4 border-t border-slate-100 text-center">
         <p className="text-xs text-slate-400">Powered by Gemini 2.5 & 3.0</p>
       </div>

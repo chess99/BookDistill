@@ -60,20 +60,9 @@ const UploadView: React.FC<UploadViewProps> = ({
     >
       <div className="text-center mb-6">
         <h2 className="text-3xl font-bold text-slate-900 mb-2">Distill Knowledge from Books</h2>
-        <p className="text-slate-500 max-w-md mx-auto mb-3">
+        <p className="text-slate-500 max-w-md mx-auto">
           Upload an EPUB to get a comprehensive AI-generated summary and analysis using the most advanced Gemini models.
         </p>
-        <a
-          href="https://cearl.cc/ai-reading/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 transition-colors"
-        >
-          <span>查看已发布书籍</span>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M10.5 1.5L1.5 10.5M10.5 1.5H4.5M10.5 1.5V7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </a>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-4 mb-8">
