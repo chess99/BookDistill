@@ -28,6 +28,14 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
   
   const isGenerating = session.status !== 'complete' && session.status !== 'error';
 
+  const sanitizeFilenamePart = (value: string, fallback: string) => {
+    const sanitized = value
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/\s+/g, '_');
+    return sanitized || fallback;
+  };
+
   // Handle Scroll Logic
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -78,9 +86,9 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
     if (!session.summary) return;
     const element = document.createElement("a");
     const file = new Blob([session.summary], {type: 'text/markdown'});
-    const filename = session.metadata 
-      ? `${session.metadata.title.replace(/\s+/g, '_')}_distilled.md`
-      : 'summary.md';
+    const filename = session.metadata
+      ? `${sanitizeFilenamePart(session.metadata.author || 'unknown-author', 'unknown-author')}-${sanitizeFilenamePart(session.metadata.title || 'untitled', 'untitled')}.md`
+      : 'unknown-author-untitled.md';
     element.href = URL.createObjectURL(file);
     element.download = filename;
     document.body.appendChild(element);
@@ -239,7 +247,11 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
         isOpen={isGitHubModalOpen} 
         onClose={() => setIsGitHubModalOpen(false)} 
         contentToSave={session.summary || ''}
-        defaultFilename={session.metadata ? `${session.metadata.title.replace(/\s+/g, '_').toLowerCase()}_summary.md` : 'summary.md'}
+        defaultFilename={
+          session.metadata
+            ? `${sanitizeFilenamePart(session.metadata.author || 'unknown-author', 'unknown-author')}-${sanitizeFilenamePart(session.metadata.title || 'untitled', 'untitled')}.md`
+            : 'unknown-author-untitled.md'
+        }
       />
     </div>
   );

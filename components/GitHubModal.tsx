@@ -1,7 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { Github, Loader2, CheckCircle, AlertCircle, Save } from './Icons';
-import { validateToken, getUserRepos, saveFileToRepo } from '../services/githubService';
+import { validateToken, getUserRepos, getRepoFolders, saveFileToRepo } from '../services/githubService';
 import { GitHubRepo } from '../types';
+
+const GH_TOKEN_KEY = 'gh_token';
+const GH_LAST_REPO_KEY = 'gh_last_repo';
+const GH_REPO_PATH_MEMORY_KEY = 'gh_repo_path_memory';
+
+type RepoPathMemory = Record<
+  string,
+  {
+    mode: 'existing' | 'new';
+    existingPath: string;
+    newPath: string;
+  }
+>;
+
+const readRepoPathMemory = (): RepoPathMemory => {
+  try {
+    const raw = localStorage.getItem(GH_REPO_PATH_MEMORY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeRepoPathMemory = (repo: string, value: RepoPathMemory[string]) => {
+  if (!repo) return;
+  const current = readRepoPathMemory();
+  current[repo] = value;
+  localStorage.setItem(GH_REPO_PATH_MEMORY_KEY, JSON.stringify(current));
+};
 
 interface GitHubModalProps {
   isOpen: boolean;
@@ -11,14 +42,18 @@ interface GitHubModalProps {
 }
 
 const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSave, defaultFilename }) => {
-  const [token, setToken] = useState(localStorage.getItem('gh_token') || '');
+  const [token, setToken] = useState(localStorage.getItem(GH_TOKEN_KEY) || '');
   const [username, setUsername] = useState<string | null>(null);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
-  const [selectedRepo, setSelectedRepo] = useState<string>('');
-  const [path, setPath] = useState('');
+  const [selectedRepo, setSelectedRepo] = useState<string>(localStorage.getItem(GH_LAST_REPO_KEY) || '');
+  const [repoFolders, setRepoFolders] = useState<string[]>([]);
+  const [pathMode, setPathMode] = useState<'existing' | 'new'>('existing');
+  const [selectedFolderPath, setSelectedFolderPath] = useState('');
+  const [newFolderPath, setNewFolderPath] = useState('');
   const [filename, setFilename] = useState(defaultFilename);
   
   const [loading, setLoading] = useState(false);
+  const [loadingFolders, setLoadingFolders] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successUrl, setSuccessUrl] = useState<string | null>(null);
 
@@ -41,7 +76,7 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
     const user = await validateToken(token);
     if (user) {
       setUsername(user);
-      localStorage.setItem('gh_token', token);
+      localStorage.setItem(GH_TOKEN_KEY, token);
       fetchRepos(token);
     } else {
       setError("Invalid Personal Access Token.");
@@ -55,7 +90,13 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
       const r = await getUserRepos(validToken);
       setRepos(r);
       if (r.length > 0) {
-        setSelectedRepo(r[0].full_name);
+        const rememberedRepo = localStorage.getItem(GH_LAST_REPO_KEY);
+        const initialRepo = rememberedRepo && r.some((repo) => repo.full_name === rememberedRepo)
+          ? rememberedRepo
+          : r[0].full_name;
+        setSelectedRepo(initialRepo);
+        localStorage.setItem(GH_LAST_REPO_KEY, initialRepo);
+        fetchFolders(validToken, initialRepo, r);
       }
     } catch (e) {
       setError("Failed to load repositories.");
@@ -64,14 +105,45 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
     }
   };
 
+  const fetchFolders = async (validToken: string, repoFullName: string, repoList: GitHubRepo[] = repos) => {
+    const selected = repoList.find((r) => r.full_name === repoFullName);
+    if (!selected) {
+      setRepoFolders([]);
+      setSelectedFolderPath('');
+      return;
+    }
+
+    const [owner, repoName] = selected.full_name.split('/');
+    setLoadingFolders(true);
+    setError(null);
+    try {
+      const folders = await getRepoFolders(validToken, owner, repoName, selected.default_branch);
+      const remembered = readRepoPathMemory()[repoFullName];
+      const rememberedExistingPath = remembered?.existingPath || '';
+      setRepoFolders(folders);
+      setPathMode(remembered?.mode || 'existing');
+      setNewFolderPath(remembered?.newPath || '');
+      setSelectedFolderPath(
+        rememberedExistingPath && folders.includes(rememberedExistingPath) ? rememberedExistingPath : ''
+      );
+    } catch (e) {
+      setRepoFolders([]);
+      setSelectedFolderPath('');
+      setError('Failed to load repository folders.');
+    } finally {
+      setLoadingFolders(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!selectedRepo || !filename) return;
+    const finalPath = pathMode === 'new' ? newFolderPath.trim() : selectedFolderPath.trim();
     
     setLoading(true);
     setError(null);
     try {
       const [owner, repoName] = selectedRepo.split('/');
-      const htmlUrl = await saveFileToRepo(token, owner, repoName, path, filename, contentToSave);
+      const htmlUrl = await saveFileToRepo(token, owner, repoName, finalPath, filename.trim(), contentToSave);
       setSuccessUrl(htmlUrl);
     } catch (e: any) {
       setError(e.message || "Failed to save.");
@@ -79,6 +151,15 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!selectedRepo) return;
+    writeRepoPathMemory(selectedRepo, {
+      mode: pathMode,
+      existingPath: selectedFolderPath.trim(),
+      newPath: newFolderPath.trim()
+    });
+  }, [selectedRepo, pathMode, selectedFolderPath, newFolderPath]);
 
   if (!isOpen) return null;
 
@@ -150,7 +231,14 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
                     <CheckCircle className="w-4 h-4" />
                     Connected as <strong>{username}</strong>
                     <button 
-                      onClick={() => { setUsername(null); setRepos([]); }} 
+                      onClick={() => {
+                        setUsername(null);
+                        setRepos([]);
+                        setRepoFolders([]);
+                        setSelectedRepo('');
+                        setSelectedFolderPath('');
+                        setNewFolderPath('');
+                      }} 
                       className="text-xs underline ml-auto text-slate-500 hover:text-red-500 pointer-events-auto"
                     >
                       Disconnect
@@ -161,7 +249,12 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
                     <label className="block text-sm font-medium text-slate-700 mb-1">Repository</label>
                     <select 
                       value={selectedRepo} 
-                      onChange={(e) => setSelectedRepo(e.target.value)}
+                      onChange={(e) => {
+                        const nextRepo = e.target.value;
+                        setSelectedRepo(nextRepo);
+                        localStorage.setItem(GH_LAST_REPO_KEY, nextRepo);
+                        fetchFolders(token, nextRepo);
+                      }}
                       className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-900"
                     >
                       {repos.map(r => (
@@ -173,13 +266,58 @@ const GitHubModal: React.FC<GitHubModalProps> = ({ isOpen, onClose, contentToSav
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <label className="block text-sm font-medium text-slate-700 mb-1">Folder Path (Optional)</label>
-                      <input 
-                        type="text" 
-                        value={path}
-                        onChange={(e) => setPath(e.target.value)}
-                        placeholder="notes/books"
-                        className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-900"
-                      />
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPathMode('existing')}
+                            className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                              pathMode === 'existing'
+                                ? 'bg-blue-50 border-blue-300 text-blue-700'
+                                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            Select Existing
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPathMode('new')}
+                            className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                              pathMode === 'new'
+                                ? 'bg-blue-50 border-blue-300 text-blue-700'
+                                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            Create New
+                          </button>
+                        </div>
+
+                        {pathMode === 'existing' ? (
+                          <select
+                            value={selectedFolderPath}
+                            onChange={(e) => setSelectedFolderPath(e.target.value)}
+                            disabled={loadingFolders}
+                            className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-900 disabled:opacity-60"
+                          >
+                            <option value="">(Repository root)</option>
+                            {repoFolders.map((folder) => (
+                              <option key={folder} value={folder}>
+                                {folder}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            value={newFolderPath}
+                            onChange={(e) => setNewFolderPath(e.target.value)}
+                            placeholder="notes/books"
+                            className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white text-slate-900"
+                          />
+                        )}
+
+                        {loadingFolders && <p className="text-xs text-slate-500">Loading folders...</p>}
+                      </div>
                     </div>
                   </div>
 

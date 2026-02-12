@@ -40,6 +40,32 @@ export const getUserRepos = async (token: string): Promise<GitHubRepo[]> => {
   return repos;
 };
 
+export const getRepoFolders = async (
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string
+): Promise<string[]> => {
+  const res = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (!res.ok) throw new Error('Failed to fetch repository folders');
+
+  const data = await res.json();
+  const tree = Array.isArray(data.tree) ? data.tree : [];
+
+  const folders = tree
+    .filter((item: { type?: string; path?: string }) => item.type === 'tree' && item.path)
+    .map((item: { path: string }) => item.path)
+    .sort((a: string, b: string) => a.localeCompare(b));
+
+  return folders;
+};
+
 export const saveFileToRepo = async (
   token: string,
   owner: string,
@@ -49,8 +75,9 @@ export const saveFileToRepo = async (
   content: string
 ): Promise<string> => {
   
-  // Ensure path ends with slash if not empty
-  const cleanPath = path ? (path.endsWith('/') ? path : `${path}/`) : '';
+  // Normalize folder path: remove leading/trailing slashes.
+  const normalizedPath = path.trim().replace(/^\/+|\/+$/g, '');
+  const cleanPath = normalizedPath ? `${normalizedPath}/` : '';
   const fullPath = `${cleanPath}${filename}`;
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${fullPath}`;
   
