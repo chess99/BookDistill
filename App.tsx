@@ -95,7 +95,7 @@ function App() {
         onNewSession={() => setActiveSessionId(null)}
       />
 
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50/50">
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50/50 pt-16 md:pt-0">
         {renderContent()}
       </main>
     </div>

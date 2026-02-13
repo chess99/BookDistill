@@ -20,25 +20,72 @@ interface SidebarProps {
   onNewSession: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ 
-  sessions, 
-  activeSessionId, 
-  onSelectSession, 
-  onDeleteSession, 
-  onNewSession 
+const Sidebar: React.FC<SidebarProps> = ({
+  sessions,
+  activeSessionId,
+  onSelectSession,
+  onDeleteSession,
+  onNewSession
 }) => {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+
   return (
-    <div className="w-72 bg-white border-r border-slate-200 flex-col hidden md:flex z-20">
-      <div className="p-4 border-b border-slate-100 flex items-center gap-2">
-        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-blue-200 shadow-lg">
-          <BookOpen size={18} />
+    <>
+      {/* Mobile Menu Button */}
+      <button
+        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+        aria-label="Toggle menu"
+      >
+        <svg className="w-6 h-6 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          {isMobileMenuOpen ? (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          )}
+        </svg>
+      </button>
+
+      {/* Mobile Overlay */}
+      {isMobileMenuOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div className={`
+        fixed md:relative inset-y-0 left-0 z-40
+        w-72 bg-white border-r border-slate-200 flex flex-col
+        transform transition-transform duration-300 ease-in-out
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+      <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-blue-200 shadow-lg">
+            <BookOpen size={18} />
+          </div>
+          <span className="font-bold text-lg tracking-tight">BookDistill</span>
         </div>
-        <span className="font-bold text-lg tracking-tight">BookDistill</span>
+        {/* Close button for mobile */}
+        <button
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="md:hidden p-1 hover:bg-slate-100 rounded transition-colors"
+          aria-label="Close menu"
+        >
+          <svg className="w-5 h-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
 
       <div className="p-4">
-        <button 
-          onClick={onNewSession}
+        <button
+          onClick={() => {
+            onNewSession();
+            setIsMobileMenuOpen(false);
+          }}
           className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-3 px-4 rounded-xl hover:bg-slate-800 transition-all shadow-md shadow-slate-200 font-medium"
         >
           <Plus size={18} />
@@ -58,13 +105,16 @@ const Sidebar: React.FC<SidebarProps> = ({
         )}
 
         {sessions.map(session => (
-          <div 
+          <div
             key={session.id}
-            onClick={() => onSelectSession(session.id)}
+            onClick={() => {
+              onSelectSession(session.id);
+              setIsMobileMenuOpen(false);
+            }}
             className={`
               group flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all border
-              ${activeSessionId === session.id 
-                ? 'bg-blue-50 border-blue-100' 
+              ${activeSessionId === session.id
+                ? 'bg-blue-50 border-blue-100'
                 : 'bg-white border-transparent hover:bg-slate-50 hover:border-slate-100'}
             `}
           >
@@ -147,6 +197,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <p className="text-xs text-slate-400">Powered by Gemini 2.5 & 3.0</p>
       </div>
     </div>
+    </>
   );
 };
 
