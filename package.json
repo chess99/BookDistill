@@ -9,17 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^1.30.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.554.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.0",
-    "lucide-react": "^0.554.0",
-    "@google/genai": "^1.30.0",
-    "jszip": "^3.10.1"
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "pinyin-pro": "^3.28.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
