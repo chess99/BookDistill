@@ -1,5 +1,5 @@
 {
-  "name": "BookDistill - EPUB Knowledge Extractor",
-  "description": "Convert EPUBs to text and use Gemini 2.5 Flash to extract comprehensive knowledge summaries. Includes GitHub integration for saving results.",
+  "name": "BookDistill - AI Book Knowledge Extractor",
+  "description": "Extract knowledge from books (EPUB, Markdown, etc.) using Gemini AI to generate comprehensive summaries. Includes GitHub integration for saving results.",
   "requestFramePermissions": []
 }

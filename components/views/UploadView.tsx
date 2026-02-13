@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Upload, Languages, Cpu } from '../Icons';
 import { LANGUAGES, MODELS } from '../../constants';
+import { parserFactory } from '../../services/parserFactory';
 
 interface UploadViewProps {
   targetLanguage: string;
@@ -24,6 +25,7 @@ const UploadView: React.FC<UploadViewProps> = ({
 }) => {
   const [dragActive, setDragActive] = useState(false);
   const hasApiKey = geminiApiKey.trim().length > 0;
+  const supportedFormats = parserFactory.getSupportedFormats();
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -61,7 +63,10 @@ const UploadView: React.FC<UploadViewProps> = ({
       <div className="text-center mb-6">
         <h2 className="text-3xl font-bold text-slate-900 mb-2">Distill Knowledge from Books</h2>
         <p className="text-slate-500 max-w-md mx-auto">
-          Upload an EPUB to get a comprehensive AI-generated summary and analysis using the most advanced Gemini models.
+          Upload a book file to get a comprehensive AI-generated summary and analysis using the most advanced Gemini models.
+        </p>
+        <p className="text-sm text-slate-400 mt-2">
+          Supported: {supportedFormats.extensions.map(e => e.toUpperCase()).join(', ')}
         </p>
       </div>
 
@@ -139,12 +144,12 @@ const UploadView: React.FC<UploadViewProps> = ({
           <Upload size={40} />
         </div>
         <div className="text-center space-y-2">
-          <p className="text-lg font-semibold text-slate-800">Drop your EPUB here</p>
-          <input 
-            type="file" 
-            id="epub-upload" 
-            className="hidden" 
-            accept=".epub"
+          <p className="text-lg font-semibold text-slate-800">Drop your book file here</p>
+          <input
+            type="file"
+            id="epub-upload"
+            className="hidden"
+            accept={supportedFormats.accept}
             disabled={!hasApiKey}
             onChange={handleChange}
           />

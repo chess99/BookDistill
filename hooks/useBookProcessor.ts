@@ -1,5 +1,6 @@
 
-import { parseEpub } from '../services/epubService';
+import { parserFactory } from '../services/parserFactory';
+import { ParseError } from '../types';
 import { GoogleGenAI } from '@google/genai';
 import { CONTEXT_WINDOW_CHAR_LIMIT } from '../constants';
 import { BookSession } from '../types';
@@ -13,8 +14,11 @@ interface UseBookProcessorProps {
 export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBookProcessorProps) => {
 
   const processBook = async (file: File, language: string, modelId: string) => {
-    if (!file.name.endsWith('.epub')) {
-      alert("Please upload a valid .epub file");
+    // Dynamic format detection
+    const format = parserFactory.detectFormat(file);
+    if (!format) {
+      const supported = parserFactory.getSupportedFormats();
+      alert(`Unsupported file format. Please upload: ${supported.extensions.map(e => e.toUpperCase()).join(', ')}`);
       return;
     }
 
@@ -26,7 +30,7 @@ export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBo
       metadata: null,
       summary: '',
       status: 'parsing',
-      message: 'Extracting text from EPUB...',
+      message: `Extracting text from ${format.toUpperCase()} file...`,
       timestamp: Date.now(),
       language,
       model: modelId
@@ -34,27 +38,42 @@ export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBo
     addSession(newSession);
 
     try {
-      // 2. Parse EPUB
-      const { text, title, author } = await parseEpub(file);
-      
+      // 2. Parse file using factory
+      const result = await parserFactory.parseFile(file);
+
       updateSession(newId, {
-        metadata: { title, author, rawTextLength: text.length }
+        metadata: {
+          title: result.title,
+          author: result.author,
+          rawTextLength: result.text.length,
+          format: result.format
+        }
       });
 
       // 3. Check Limits
-      if (text.length > CONTEXT_WINDOW_CHAR_LIMIT) {
-        updateSession(newId, { 
-          status: 'error', 
-          message: `The book is too long (${(text.length/1000000).toFixed(1)}M chars). It exceeds the model's context window.` 
+      if (result.text.length > CONTEXT_WINDOW_CHAR_LIMIT) {
+        updateSession(newId, {
+          status: 'error',
+          message: `The book is too long (${(result.text.length/1000000).toFixed(1)}M chars). It exceeds the model's context window.`
         });
         return;
       }
 
       // 4. Generate Summary
-      await generateSummary(newId, text, title, author, language, modelId);
+      await generateSummary(newId, result.text, result.title, result.author || 'Unknown Author', language, modelId);
 
     } catch (e: any) {
-      updateSession(newId, { status: 'error', message: `Failed to parse EPUB: ${e.message}` });
+      if (e instanceof ParseError) {
+        updateSession(newId, {
+          status: 'error',
+          message: `Failed to parse ${e.format.toUpperCase()}: ${e.message}`
+        });
+      } else {
+        updateSession(newId, {
+          status: 'error',
+          message: `Unexpected error: ${e.message}`
+        });
+      }
     }
   };
 

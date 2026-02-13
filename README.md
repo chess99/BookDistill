@@ -10,7 +10,7 @@ Prerequisites: Node.js 20+
    `npm install`
 2. Start dev server:
    `npm run dev`
-3. Open the app, paste your Gemini API key in the UI, then upload an `.epub`.
+3. Open the app, paste your Gemini API key in the UI, then upload a book file (EPUB, Markdown, etc.).
 
 The Gemini API key is entered from the frontend and stored in browser `localStorage` (`book_distill_gemini_api_key`).
 
