@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Test outputs
+/tmp/
+*.test.md
+output.md
+summary*.md
+test-output/

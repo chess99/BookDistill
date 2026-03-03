@@ -73,6 +73,31 @@ The repository includes `.github/workflows/deploy-pages.yml` for auto-deployment
 1. Go to **Settings** → **Pages**
 2. In **Build and deployment**, choose **GitHub Actions**
 
+## Testing
+
+### Run Tests
+
+```bash
+# Run parser unit tests
+npm test
+
+# Test CLI parsing (without API call)
+npm run test:cli
+
+# Manual Web testing
+npm run dev
+# Then open http://localhost:3000 and test file upload
+```
+
+### Test Files
+
+Test fixtures are provided in `test-fixtures/`:
+- `test-book.md` - Markdown with Frontmatter
+- `no-frontmatter.md` - Markdown without Frontmatter
+- `sample.epub` - EPUB placeholder (replace with real file for testing)
+
+See [TEST_GUIDE.md](./TEST_GUIDE.md) for detailed testing instructions.
+
 ## Security Note
 
 API keys used in the browser or CLI should be treated carefully:
