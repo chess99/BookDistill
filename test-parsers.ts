@@ -78,16 +78,10 @@ async function testMarkdownParser() {
 async function testEpubParser() {
   console.log('📚 测试 EPUB 解析器...');
 
-  // 查找项目中的 EPUB 文件
-  const possibleEpubFiles = [
-    'test.epub',
-    'sample.epub',
-    'test-book.epub'
-  ];
+  // 使用测试固件中的 EPUB 文件
+  const epubFile = 'test-fixtures/sample.epub';
 
-  const epubFile = possibleEpubFiles.find(f => fs.existsSync(f));
-
-  if (!epubFile) {
+  if (!fs.existsSync(epubFile)) {
     console.log('  ⚠️  未找到 EPUB 测试文件,跳过测试');
     results.push({
       name: 'EPUB Parser',
