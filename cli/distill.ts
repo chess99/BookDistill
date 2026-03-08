@@ -2,62 +2,107 @@
 /**
  * BookDistill CLI
  *
+ * Config file: ~/.bookdistill/config.json
+ *
  * Usage:
- *   npx tsx cli/distill.ts -i book.epub -o summary.md
+ *   book-distill                          # fully interactive
+ *   book-distill -i book.epub             # pick output interactively
+ *   book-distill -i book.epub -o out.md   # non-interactive
+ *   book-distill config --init            # create example config
+ *   book-distill config --show            # print current config (keys masked)
  *
  * Options:
- *   -i, --input      Input file (epub, md)
- *   -o, --output     Output file (optional, defaults to stdout)
- *   -l, --lang       Output language (default: Chinese)
- *   -m, --model      Model ID (default: gemini-2.5-pro-preview)
- *   -p, --provider   Provider: gemini | openai | anthropic | openai_compatible (default: gemini)
- *   --base-url       Base URL override (required for openai_compatible)
- *   -h, --help       Show help
- *
- * Environment variables (pick the one matching your provider):
- *   GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, AI_API_KEY
+ *   -i, --input <file>       Input file (epub, md)
+ *   -o, --output <file>      Output file ("-" for stdout)
+ *   -l, --lang <lang>        Output language (default from config)
+ *   -m, --model <id>         Model ID or "provider/model" shorthand
+ *   -p, --provider <name>    Provider name (key in config.providers)
+ *   --base-url <url>         Base URL override
+ *   --api-key <key>          API key override (overrides config + env)
+ *   --github                 Push to GitHub (uses config.github)
+ *   --no-interactive         Disable all prompts, fail instead
+ *   -h, --help               Show help
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { DEFAULTS, LANGUAGES, SYSTEM_INSTRUCTION_TEMPLATE } from '../config/defaults';
+import {
+  readConfig,
+  resolveProvider,
+  initConfig,
+  printConfig,
+  CONFIG_PATH,
+  type BookDistillConfig,
+} from './config';
+import {
+  ask,
+  askWithDefault,
+  selectFromList,
+  pickFile,
+  pickOutputDestination,
+  pickGitHubFolder,
+} from './prompt';
 import { NodeFileAdapter, NodeDOMParserAdapter } from './adapters/nodeAdapters';
 import { parseEpubFile } from '../services/parsers/epubParser.universal';
 import { parseMarkdownFile } from '../services/parsers/markdownParser.universal';
+import { DEFAULTS, LANGUAGES, SYSTEM_INSTRUCTION_TEMPLATE } from '../config/defaults';
+import { generateBookFilename, generateMarkdownWithFrontmatter } from '../utils/filenameUtils';
+import {
+  validateToken,
+  getUserRepos,
+  getRepoFolders,
+  saveFileToRepo,
+} from '../services/githubService';
 
-// ── Argument Parsing ─────────────────────────────────────────────────────────
-
-type Provider = 'gemini' | 'openai' | 'anthropic' | 'openai_compatible';
+// ── Arg parsing ───────────────────────────────────────────────────────────────
 
 interface Args {
+  subcommand?: string;       // 'config'
+  subArgs: string[];         // args after subcommand
   input?: string;
   output?: string;
-  lang: string;
-  model: string;
-  provider: Provider;
+  lang?: string;
+  model?: string;
+  provider?: string;
   baseUrl?: string;
+  apiKey?: string;
+  github: boolean;
+  interactive: boolean;
   help: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    lang: DEFAULTS.LANGUAGE,
-    model: 'gemini-2.5-pro-preview',
-    provider: 'gemini',
+    subArgs: [],
+    github: false,
+    interactive: true,
     help: false,
   };
 
-  for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i];
-    const next = argv[i + 1];
+  const rest = argv.slice(2);
+
+  // Check for subcommand first
+  if (rest[0] === 'config') {
+    args.subcommand = 'config';
+    args.subArgs = rest.slice(1);
+    return args;
+  }
+
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    const next = rest[i + 1];
 
     switch (arg) {
       case '-i': case '--input':    args.input    = next; i++; break;
       case '-o': case '--output':   args.output   = next; i++; break;
       case '-l': case '--lang':     args.lang     = next; i++; break;
       case '-m': case '--model':    args.model    = next; i++; break;
-      case '-p': case '--provider': args.provider = next as Provider; i++; break;
+      case '-p': case '--provider': args.provider = next; i++; break;
       case '--base-url':            args.baseUrl  = next; i++; break;
+      case '--api-key':             args.apiKey   = next; i++; break;
+      case '--github':              args.github   = true; break;
+      case '--no-interactive':      args.interactive = false; break;
       case '-h': case '--help':     args.help     = true; break;
     }
   }
@@ -65,49 +110,52 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-function showHelp() {
-  const languageList = LANGUAGES.map(l => l.code).join(', ');
+function showHelp(config: BookDistillConfig) {
+  const providerList = Object.keys(config.providers).join(', ');
+  const langList = LANGUAGES.map(l => l.code).join(', ');
+
   console.log(`
-BookDistill CLI - Extract knowledge from books using AI
+BookDistill CLI — Extract knowledge from books using AI
+
+Config file: ${CONFIG_PATH}
 
 Usage:
-  npx tsx cli/distill.ts -i <file> [options]
+  book-distill [options]                   Fully interactive if options omitted
+  book-distill config --init               Create example config
+  book-distill config --show               Print current config (keys masked)
 
 Options:
-  -i, --input <file>       Input file (epub, md, markdown)
-  -o, --output <file>      Output markdown file (default: stdout)
-  -l, --lang <lang>        Output language (default: ${DEFAULTS.LANGUAGE})
-                           Available: ${languageList}
-  -m, --model <model>      Model ID (default: gemini-2.5-pro-preview)
-  -p, --provider <name>    Provider: gemini | openai | anthropic | openai_compatible
-                           (default: gemini)
-  --base-url <url>         Base URL override (required for openai_compatible)
+  -i, --input <file>       Input file (.epub, .md, .markdown)
+  -o, --output <file>      Output file ("-" for stdout)
+  -l, --lang <lang>        Output language (default: ${config.defaults.language})
+                           Available: ${langList}
+  -m, --model <id>         Model ID, or "provider/model" shorthand
+                           e.g. -m bailian/qwen3.5-plus
+  -p, --provider <name>    Provider name from config (available: ${providerList})
+  --base-url <url>         Override provider base URL
+  --api-key <key>          Override API key
+  --github                 Push result to GitHub (uses config.github)
+  --no-interactive         Fail instead of prompting for missing values
   -h, --help               Show this help
 
-Environment variables:
-  GEMINI_API_KEY           API key for Google Gemini
-  OPENAI_API_KEY           API key for OpenAI
-  ANTHROPIC_API_KEY        API key for Anthropic
-  AI_API_KEY               Generic fallback for any provider
-
 Examples:
-  # Gemini
-  GEMINI_API_KEY=xxx npx tsx cli/distill.ts -i book.epub -o summary.md
+  # Fully interactive (pick file, model, output)
+  book-distill
 
-  # OpenAI
-  OPENAI_API_KEY=xxx npx tsx cli/distill.ts -p openai -m gpt-4o -i book.epub
+  # Use provider/model shorthand
+  book-distill -m bailian/qwen3.5-plus -i book.epub
 
-  # Anthropic
-  ANTHROPIC_API_KEY=xxx npx tsx cli/distill.ts -p anthropic -m claude-opus-4-6 -i book.epub
+  # Push to GitHub
+  book-distill -i book.epub --github
 
-  # OpenAI-compatible (e.g. local LLM)
-  AI_API_KEY=xxx npx tsx cli/distill.ts -p openai_compatible --base-url http://localhost:11434 -m llama3 -i book.epub
+  # Non-interactive (CI/scripts)
+  book-distill -i book.epub -o summary.md -m bailian/qwen3.5-plus --no-interactive
 `);
 }
 
-// ── File Parsing ──────────────────────────────────────────────────────────────
+// ── File parsing ──────────────────────────────────────────────────────────────
 
-async function parseFile(filePath: string): Promise<{ text: string; title: string; author?: string }> {
+async function parseFile(filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
   const fileAdapter = NodeFileAdapter.fromPath(filePath);
 
@@ -127,75 +175,116 @@ async function parseFile(filePath: string): Promise<{ text: string; title: strin
   }
 }
 
-// ── AI Calls ──────────────────────────────────────────────────────────────────
+// ── AI generation ─────────────────────────────────────────────────────────────
 
-async function generateSummaryGemini(
-  text: string, title: string, author: string,
-  language: string, modelId: string, apiKey: string, baseUrl?: string
+async function generateSummary(
+  text: string,
+  title: string,
+  author: string,
+  language: string,
+  providerType: string,
+  modelId: string,
+  apiKey: string,
+  baseUrl?: string
 ): Promise<string> {
-  const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({ apiKey, ...(baseUrl ? { baseUrl } : {}) });
-  const systemInstruction = SYSTEM_INSTRUCTION_TEMPLATE(language);
+  const systemPrompt = SYSTEM_INSTRUCTION_TEMPLATE(language);
+  const userMessage = `Title: ${title}\nAuthor: ${author}\n\n${text}`;
 
-  process.stderr.write(`Sending to ${modelId} via Gemini...\n`);
-  const response = await ai.models.generateContent({
-    model: modelId,
-    contents: [{ role: 'user', parts: [{ text: `Title: ${title}\nAuthor: ${author}\n\n${text}` }] }],
-    config: { temperature: DEFAULTS.TEMPERATURE, systemInstruction },
-  });
-  return response.text || '';
+  if (providerType === 'gemini') {
+    const { GoogleGenAI } = await import('@google/genai');
+    const ai = new GoogleGenAI({ apiKey, ...(baseUrl ? { baseUrl } : {}) });
+    const response = await ai.models.generateContent({
+      model: modelId,
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      config: { temperature: DEFAULTS.TEMPERATURE, systemInstruction: systemPrompt },
+    });
+    return response.text || '';
+  }
+
+  // OpenAI / openai_compatible
+  if (providerType === 'openai' || providerType === 'openai_compatible') {
+    const base = (baseUrl || 'https://api.openai.com').replace(/\/$/, '');
+    const res = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: modelId,
+        temperature: DEFAULTS.TEMPERATURE,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+    const json = await res.json() as any;
+    return json.choices?.[0]?.message?.content || '';
+  }
+
+  // Anthropic
+  if (providerType === 'anthropic') {
+    const base = (baseUrl || 'https://api.anthropic.com').replace(/\/$/, '');
+    const res = await fetch(`${base}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: modelId,
+        max_tokens: 16000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
+    });
+    if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
+    const json = await res.json() as any;
+    return json.content?.[0]?.text || '';
+  }
+
+  throw new Error(`Unknown provider type: ${providerType}`);
 }
 
-async function generateSummaryOpenAI(
-  text: string, title: string, author: string,
-  language: string, modelId: string, apiKey: string, baseUrl: string
+// ── GitHub push ───────────────────────────────────────────────────────────────
+
+async function pushToGitHub(
+  config: BookDistillConfig,
+  content: string,
+  filename: string,
+  interactive: boolean
 ): Promise<string> {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-  const systemPrompt = SYSTEM_INSTRUCTION_TEMPLATE(language);
+  const gh = config.github;
+  if (!gh?.token || !gh?.owner || !gh?.repo) {
+    throw new Error(
+      'GitHub config incomplete. Set config.github.token/owner/repo in ~/.bookdistill/config.json'
+    );
+  }
 
-  process.stderr.write(`Sending to ${modelId} via ${baseUrl}...\n`);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: modelId,
-      temperature: DEFAULTS.TEMPERATURE,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Title: ${title}\nAuthor: ${author}\n\n${text}` },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
-  const json = await res.json() as any;
-  return json.choices?.[0]?.message?.content || '';
-}
+  // Validate token
+  process.stderr.write('Validating GitHub token...\n');
+  const username = await validateToken(gh.token);
+  if (!username) throw new Error('Invalid GitHub token');
 
-async function generateSummaryAnthropic(
-  text: string, title: string, author: string,
-  language: string, modelId: string, apiKey: string, baseUrl: string
-): Promise<string> {
-  const url = `${baseUrl.replace(/\/$/, '')}/v1/messages`;
-  const systemPrompt = SYSTEM_INSTRUCTION_TEMPLATE(language);
+  let folder = gh.path || '';
 
-  process.stderr.write(`Sending to ${modelId} via Anthropic...\n`);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: modelId,
-      max_tokens: 16000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: `Title: ${title}\nAuthor: ${author}\n\n${text}` }],
-    }),
-  });
-  if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
-  const json = await res.json() as any;
-  return json.content?.[0]?.text || '';
+  if (interactive) {
+    process.stderr.write('Fetching repo folders...\n');
+    let folders: string[] = [];
+    try {
+      const repos = await getUserRepos(gh.token);
+      const repo = repos.find(r => r.name === gh.repo && r.full_name.startsWith(gh.owner));
+      if (repo) {
+        folders = await getRepoFolders(gh.token, gh.owner, gh.repo, repo.default_branch);
+      }
+    } catch { /* non-fatal */ }
+
+    folder = await pickGitHubFolder(folders, gh.path || '');
+  }
+
+  process.stderr.write(`Pushing to ${gh.owner}/${gh.repo}/${folder ? folder + '/' : ''}${filename}...\n`);
+  const url = await saveFileToRepo(gh.token, gh.owner, gh.repo, folder, filename, content);
+  return url;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -203,70 +292,218 @@ async function generateSummaryAnthropic(
 async function main() {
   const args = parseArgs(process.argv);
 
-  if (args.help || !args.input) {
-    showHelp();
-    process.exit(args.help ? 0 : 1);
+  // ── Subcommand: config ──
+  if (args.subcommand === 'config') {
+    if (args.subArgs.includes('--init')) {
+      initConfig();
+    } else if (args.subArgs.includes('--show')) {
+      try {
+        printConfig(readConfig());
+      } catch (e: any) {
+        console.error(e.message);
+        process.exit(1);
+      }
+    } else {
+      console.log(`Usage:
+  book-distill config --init   Create example config at ${CONFIG_PATH}
+  book-distill config --show   Print current config (keys masked)`);
+    }
+    return;
   }
 
-  // Resolve API key from env
-  const apiKey =
-    process.env.AI_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY;
-
-  if (!apiKey) {
-    console.error('Error: API key required. Set GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or AI_API_KEY');
-    process.exit(1);
-  }
-
-  if (!fs.existsSync(args.input)) {
-    console.error(`Error: Input file not found: ${args.input}`);
-    process.exit(1);
-  }
-
+  // ── Load config ──
+  let config: BookDistillConfig;
   try {
-    process.stderr.write(`Parsing ${args.input}...\n`);
-    const { text, title, author } = await parseFile(args.input);
-    process.stderr.write(`Extracted: "${title}" by ${author || 'Unknown'} (${(text.length / 1000).toFixed(0)}k chars)\n`);
+    config = readConfig();
+  } catch (e: any) {
+    console.error(e.message);
+    process.exit(1);
+  }
 
-    if (text.length > DEFAULTS.CONTEXT_WINDOW_CHAR_LIMIT) {
-      console.error(`Error: Book too long (${(text.length / 1_000_000).toFixed(1)}M chars).`);
+  if (args.help) {
+    showHelp(config);
+    return;
+  }
+
+  const interactive = args.interactive && process.stdin.isTTY;
+
+  // ── Step 1: Input file ──
+  let inputFile = args.input;
+  if (!inputFile) {
+    if (!interactive) {
+      console.error('Error: --input required in non-interactive mode');
       process.exit(1);
     }
+    const searchDir = os.homedir() + '/Downloads';
+    process.stderr.write('\n');
+    inputFile = await pickFile(searchDir);
+  }
 
-    let summary = '';
+  // Resolve ~ and relative paths
+  if (inputFile.startsWith('~')) {
+    inputFile = path.join(os.homedir(), inputFile.slice(1));
+  } else {
+    inputFile = path.resolve(inputFile);
+  }
 
-    switch (args.provider) {
-      case 'gemini':
-        summary = await generateSummaryGemini(text, title, author || 'Unknown', args.lang, args.model, apiKey, args.baseUrl);
-        break;
-      case 'openai':
-        summary = await generateSummaryOpenAI(text, title, author || 'Unknown', args.lang, args.model, apiKey, args.baseUrl || 'https://api.openai.com');
-        break;
-      case 'anthropic':
-        summary = await generateSummaryAnthropic(text, title, author || 'Unknown', args.lang, args.model, apiKey, args.baseUrl || 'https://api.anthropic.com');
-        break;
-      case 'openai_compatible':
-        if (!args.baseUrl) {
-          console.error('Error: --base-url is required for openai_compatible provider');
-          process.exit(1);
-        }
-        summary = await generateSummaryOpenAI(text, title, author || 'Unknown', args.lang, args.model, apiKey, args.baseUrl);
-        break;
-    }
-
-    if (args.output) {
-      fs.writeFileSync(args.output, summary, 'utf-8');
-      process.stderr.write(`Written to ${args.output}\n`);
-    } else {
-      process.stdout.write(summary);
-    }
-
-  } catch (err: any) {
-    console.error(`Error: ${err.message}`);
+  if (!fs.existsSync(inputFile)) {
+    console.error(`Error: File not found: ${inputFile}`);
     process.exit(1);
   }
+
+  // ── Step 2: Language ──
+  let language = args.lang || config.defaults.language;
+  if (!args.lang && interactive && !args.model) {
+    // Only ask language if we're being interactive about model too
+    const langItems = LANGUAGES.map(l => ({ label: l.label, value: l.code }));
+    const defaultIdx = langItems.findIndex(l => l.value === language);
+    language = await selectFromList('Output language:', langItems, Math.max(0, defaultIdx));
+  }
+
+  // ── Step 3: Provider + Model ──
+  let resolved;
+  try {
+    resolved = resolveProvider(config, {
+      provider: args.provider,
+      model: args.model,
+      baseUrl: args.baseUrl,
+      apiKey: args.apiKey,
+    });
+  } catch (e: any) {
+    if (!interactive) {
+      console.error(`Error: ${e.message}`);
+      process.exit(1);
+    }
+    // Interactive fallback: pick provider then model
+    const providerItems = Object.keys(config.providers).map(k => ({
+      label: `${k}  (${config.providers[k].type})`,
+      value: k,
+    }));
+    const defaultProviderIdx = Math.max(
+      0,
+      providerItems.findIndex(p => p.value === config.defaults.provider)
+    );
+    const chosenProvider = await selectFromList('Select provider:', providerItems, defaultProviderIdx);
+    const defaultModel = config.defaults.provider === chosenProvider
+      ? config.defaults.model
+      : '';
+    const chosenModel = await askWithDefault('Model ID', defaultModel || 'qwen3.5-plus');
+
+    resolved = resolveProvider(config, {
+      provider: chosenProvider,
+      model: chosenModel,
+      baseUrl: args.baseUrl,
+      apiKey: args.apiKey,
+    });
+  }
+
+  if (!resolved.apiKey) {
+    if (!interactive) {
+      console.error(`Error: No API key for provider "${resolved.providerName}". Set it in ${CONFIG_PATH} or via --api-key`);
+      process.exit(1);
+    }
+    resolved.apiKey = await ask(`API key for ${resolved.providerName}: `);
+    if (!resolved.apiKey) {
+      console.error('API key is required.');
+      process.exit(1);
+    }
+  }
+
+  // ── Step 4: Parse file ──
+  process.stderr.write(`\nParsing ${path.basename(inputFile)}...\n`);
+  let parsed: { text: string; title: string; author?: string };
+  try {
+    parsed = await parseFile(inputFile);
+  } catch (e: any) {
+    console.error(`Parse error: ${e.message}`);
+    process.exit(1);
+  }
+  process.stderr.write(`Extracted: "${parsed.title}" by ${parsed.author || 'Unknown'} (${(parsed.text.length / 1000).toFixed(0)}k chars)\n`);
+
+  if (parsed.text.length > DEFAULTS.CONTEXT_WINDOW_CHAR_LIMIT) {
+    console.error(`Error: Book too long (${(parsed.text.length / 1_000_000).toFixed(1)}M chars).`);
+    process.exit(1);
+  }
+
+  // ── Step 5: Generate ──
+  process.stderr.write(`Sending to ${resolved.providerName}/${resolved.model} in ${language}...\n`);
+  let summary: string;
+  try {
+    summary = await generateSummary(
+      parsed.text,
+      parsed.title,
+      parsed.author || 'Unknown',
+      language,
+      resolved.type,
+      resolved.model,
+      resolved.apiKey,
+      resolved.baseUrl
+    );
+  } catch (e: any) {
+    console.error(`AI error: ${e.message}`);
+    process.exit(1);
+  }
+
+  // ── Step 6: Output ──
+  const filename = generateBookFilename(parsed.author || '', parsed.title);
+  const contentWithFrontmatter = generateMarkdownWithFrontmatter(
+    summary,
+    parsed.author || '',
+    parsed.title
+  );
+
+  // Explicit --output flag
+  if (args.output) {
+    if (args.output === '-') {
+      process.stdout.write(contentWithFrontmatter);
+    } else {
+      const outPath = args.output.startsWith('~')
+        ? path.join(os.homedir(), args.output.slice(1))
+        : path.resolve(args.output);
+      fs.writeFileSync(outPath, contentWithFrontmatter, 'utf-8');
+      process.stderr.write(`Written to ${outPath}\n`);
+    }
+    return;
+  }
+
+  // Explicit --github flag
+  if (args.github) {
+    try {
+      const url = await pushToGitHub(config, contentWithFrontmatter, filename, interactive);
+      process.stderr.write(`Published: ${url}\n`);
+    } catch (e: any) {
+      console.error(`GitHub error: ${e.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Interactive output selection
+  if (interactive) {
+    const dest = await pickOutputDestination(filename, !!config.github?.token);
+
+    if (dest.type === 'stdout') {
+      process.stdout.write(contentWithFrontmatter);
+    } else if (dest.type === 'file') {
+      fs.writeFileSync(dest.path, contentWithFrontmatter, 'utf-8');
+      process.stderr.write(`Written to ${dest.path}\n`);
+    } else if (dest.type === 'github') {
+      try {
+        const url = await pushToGitHub(config, contentWithFrontmatter, filename, true);
+        process.stderr.write(`Published: ${url}\n`);
+      } catch (e: any) {
+        console.error(`GitHub error: ${e.message}`);
+        process.exit(1);
+      }
+    }
+    return;
+  }
+
+  // Non-interactive fallback: stdout
+  process.stdout.write(contentWithFrontmatter);
 }
 
-main();
+main().catch(e => {
+  console.error(e.message);
+  process.exit(1);
+});

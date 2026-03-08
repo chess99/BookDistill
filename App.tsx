@@ -104,6 +104,11 @@ function App() {
         <ErrorView
           session={activeSession}
           onReset={() => setActiveSessionId(null)}
+          onRetry={(file) => {
+            const lang = activeSession.language;
+            deleteSession(activeSession.id);
+            processBook(file, lang);
+          }}
         />
       );
     }
