@@ -142,14 +142,14 @@ async function testTypeExports() {
     const configModule = await import('./config/defaults');
 
     const { FileFormat, ParseError } = typesModule;
-    const { DEFAULTS, LANGUAGES, MODELS } = configModule;
+    const { DEFAULTS, LANGUAGES, PRESET_MODELS } = configModule;
 
     const checks = {
       'FileFormat 枚举': FileFormat.EPUB === 'epub' && FileFormat.MARKDOWN === 'md',
       'ParseError 类': typeof ParseError === 'function',
-      'DEFAULTS 配置': DEFAULTS.MODEL === 'gemini-3-pro-preview',
+      'DEFAULTS 配置': typeof DEFAULTS.LANGUAGE === 'string',
       'LANGUAGES 数组': Array.isArray(LANGUAGES) && LANGUAGES.length > 0,
-      'MODELS 数组': Array.isArray(MODELS) && MODELS.length === 2
+      'PRESET_MODELS 对象': typeof PRESET_MODELS === 'object' && Array.isArray(PRESET_MODELS.gemini)
     };
 
     const allPassed = Object.values(checks).every(v => v);

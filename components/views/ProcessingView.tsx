@@ -2,8 +2,6 @@
 import React from 'react';
 import { Loader2, BookOpen } from '../Icons';
 import { BookSession } from '../../types';
-import { MODELS } from '../../constants';
-
 interface ProcessingViewProps {
   session: BookSession;
 }
@@ -23,8 +21,8 @@ const ProcessingView: React.FC<ProcessingViewProps> = ({ session }) => {
         </h2>
         <p className="text-slate-500">{session.message}</p>
         <div className="flex gap-2 justify-center mt-2">
-           <div className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-            {MODELS.find(m => m.id === session.model)?.name || session.model}
+           <div className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1 rounded-full border border-slate-200 font-mono">
+            {session.model}
           </div>
           <div className="text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
             {session.language}

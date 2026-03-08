@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { BookSession } from '../../types';
-import { MODELS } from '../../constants';
 import GitHubModal from '../GitHubModal';
 import { generateBookFilename, generateMarkdownWithFrontmatter } from '../../utils/filenameUtils';
 import {
@@ -127,9 +126,7 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
               <span className="text-slate-400">{session.language}</span>
               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-              <span className="text-blue-500 font-medium">
-                {MODELS.find(m => m.id === session.model)?.shortName || 'Unknown Model'}
-              </span>
+              <span className="text-blue-500 font-medium font-mono">{session.model || 'Unknown Model'}</span>
             </p>
           </div>
         </div>
@@ -226,7 +223,7 @@ const ResultView: React.FC<ResultViewProps> = ({ session }) => {
            {isGenerating && (
              <div className="mt-4 flex items-center gap-2 text-slate-400 animate-pulse">
                <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
-               <span className="text-xs font-medium">Gemini is writing...</span>
+               <span className="text-xs font-medium">AI is writing...</span>
              </div>
            )}
         </div>

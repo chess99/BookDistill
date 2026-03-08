@@ -75,6 +75,16 @@ export interface GitHubConfig {
   path: string; // folder path
 }
 
+// AI 提供方类型
+export type AIProvider = 'gemini' | 'openai' | 'anthropic' | 'openai_compatible';
+
+export interface AIProviderConfig {
+  provider: AIProvider;
+  apiKey: string;
+  baseUrl?: string;   // 自定义 base URL（openai_compatible 必填，其他可选覆盖）
+  model: string;      // 模型 ID，用户可自由输入
+}
+
 export interface GitHubRepo {
   id: number;
   name: string;

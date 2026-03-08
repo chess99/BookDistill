@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { BookSession } from '../types';
-import { MODELS, LANGUAGES } from '../constants';
+import { LANGUAGES } from '../constants';
 
 export const useBookSessions = () => {
   // --- Session State ---

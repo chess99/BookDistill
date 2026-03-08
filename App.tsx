@@ -2,67 +2,97 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import UploadView from './components/views/UploadView';
+import SettingsView from './components/views/SettingsView';
 import ProcessingView from './components/views/ProcessingView';
 import ResultView from './components/views/ResultView';
 import ErrorView from './components/views/ErrorView';
 import { useBookSessions } from './hooks/useBookSessions';
 import { useBookProcessor } from './hooks/useBookProcessor';
-import { MODELS, LANGUAGES } from './constants';
+import { LANGUAGES } from './constants';
+import { AIProviderConfig } from './types';
+
+const DEFAULT_PROVIDER_CONFIG: AIProviderConfig = {
+  provider: 'gemini',
+  apiKey: '',
+  baseUrl: '',
+  model: 'gemini-2.5-pro-preview',
+};
+
+function loadProviderConfig(): AIProviderConfig {
+  try {
+    const saved = localStorage.getItem('book_distill_provider_config');
+    if (saved) return { ...DEFAULT_PROVIDER_CONFIG, ...JSON.parse(saved) };
+  } catch {}
+  // Migrate legacy gemini key
+  const legacyKey = localStorage.getItem('book_distill_gemini_api_key');
+  if (legacyKey) return { ...DEFAULT_PROVIDER_CONFIG, apiKey: legacyKey };
+  return DEFAULT_PROVIDER_CONFIG;
+}
+
+type ActiveView = 'upload' | 'settings';
 
 function App() {
-  // --- Global State ---
-  // Language & Model preferences (persisted simply in localStorage)
-  const [targetLanguage, setTargetLanguage] = useState<string>(() => 
+  const [targetLanguage, setTargetLanguage] = useState<string>(() =>
     localStorage.getItem('book_distill_pref_lang') || LANGUAGES[0].code
   );
-  const [selectedModel, setSelectedModel] = useState<string>(() => 
-    localStorage.getItem('book_distill_pref_model') || MODELS[0].id
-  );
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(() =>
-    localStorage.getItem('book_distill_gemini_api_key') || ''
-  );
+
+  const [providerConfig, setProviderConfig] = useState<AIProviderConfig>(loadProviderConfig);
+
+  const [activeView, setActiveView] = useState<ActiveView>('upload');
 
   useEffect(() => {
     localStorage.setItem('book_distill_pref_lang', targetLanguage);
   }, [targetLanguage]);
 
   useEffect(() => {
-    localStorage.setItem('book_distill_pref_model', selectedModel);
-  }, [selectedModel]);
+    localStorage.setItem('book_distill_provider_config', JSON.stringify(providerConfig));
+  }, [providerConfig]);
 
-  useEffect(() => {
-    localStorage.setItem('book_distill_gemini_api_key', geminiApiKey);
-  }, [geminiApiKey]);
-
-  // --- Logic Hooks ---
-  const { 
-    sessions, 
-    activeSessionId, 
-    setActiveSessionId, 
-    activeSession, 
-    addSession, 
-    updateSession, 
-    deleteSession 
+  const {
+    sessions,
+    activeSessionId,
+    setActiveSessionId,
+    activeSession,
+    addSession,
+    updateSession,
+    deleteSession,
   } = useBookSessions();
 
   const { processBook } = useBookProcessor({
     addSession,
     updateSession,
-    getApiKey: () => geminiApiKey
+    getProviderConfig: () => providerConfig,
   });
 
-  // --- View Rendering Logic ---
+  const handleNewSession = () => {
+    setActiveSessionId(null);
+    setActiveView('upload');
+  };
+
+  const handleSelectSession = (id: string) => {
+    setActiveSessionId(id);
+    setActiveView('upload');
+  };
+
   const renderContent = () => {
+    // Settings page takes priority
+    if (activeView === 'settings') {
+      return (
+        <SettingsView
+          config={providerConfig}
+          onChange={setProviderConfig}
+        />
+      );
+    }
+
     if (!activeSessionId) {
       return (
-        <UploadView 
+        <UploadView
           targetLanguage={targetLanguage}
           setTargetLanguage={setTargetLanguage}
-          selectedModel={selectedModel}
-          setSelectedModel={setSelectedModel}
-          geminiApiKey={geminiApiKey}
-          setGeminiApiKey={setGeminiApiKey}
-          onUpload={(file) => processBook(file, targetLanguage, selectedModel)}
+          providerConfig={providerConfig}
+          onUpload={(file) => processBook(file, targetLanguage)}
+          onOpenSettings={() => setActiveView('settings')}
         />
       );
     }
@@ -71,9 +101,9 @@ function App() {
 
     if (activeSession.status === 'error') {
       return (
-        <ErrorView 
-          session={activeSession} 
-          onReset={() => setActiveSessionId(null)} 
+        <ErrorView
+          session={activeSession}
+          onReset={() => setActiveSessionId(null)}
         />
       );
     }
@@ -87,12 +117,14 @@ function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans">
-      <Sidebar 
+      <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onSelectSession={setActiveSessionId}
+        activeView={activeView}
+        onSelectSession={handleSelectSession}
         onDeleteSession={deleteSession}
-        onNewSession={() => setActiveSessionId(null)}
+        onNewSession={handleNewSession}
+        onOpenSettings={() => setActiveView('settings')}
       />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50/50 pt-16 md:pt-0">

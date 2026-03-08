@@ -1,21 +1,19 @@
 
 import { parserFactory } from '../services/parserFactory';
-import { ParseError } from '../types';
-import { GoogleGenAI } from '@google/genai';
+import { ParseError, AIProviderConfig } from '../types';
 import { CONTEXT_WINDOW_CHAR_LIMIT } from '../constants';
-import { DEFAULTS, SYSTEM_INSTRUCTION_TEMPLATE } from '../config/defaults';
+import { generateSummaryStream } from '../services/aiService';
 import { BookSession } from '../types';
 
 interface UseBookProcessorProps {
   addSession: (session: BookSession) => void;
   updateSession: (id: string, updates: Partial<BookSession>) => void;
-  getApiKey: () => string;
+  getProviderConfig: () => AIProviderConfig;
 }
 
-export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBookProcessorProps) => {
+export const useBookProcessor = ({ addSession, updateSession, getProviderConfig }: UseBookProcessorProps) => {
 
-  const processBook = async (file: File, language: string, modelId: string) => {
-    // Dynamic format detection
+  const processBook = async (file: File, language: string) => {
     const format = parserFactory.detectFormat(file);
     if (!format) {
       const supported = parserFactory.getSupportedFormats();
@@ -23,9 +21,18 @@ export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBo
       return;
     }
 
+    const config = getProviderConfig();
+    if (!config.apiKey.trim()) {
+      alert('API key is required. Please configure it in Settings.');
+      return;
+    }
+    if (!config.model.trim()) {
+      alert('Model is required. Please configure it in Settings.');
+      return;
+    }
+
     const newId = Date.now().toString();
 
-    // 1. Create Initial Session
     const newSession: BookSession = {
       id: newId,
       metadata: null,
@@ -34,12 +41,11 @@ export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBo
       message: `Extracting text from ${format.toUpperCase()} file...`,
       timestamp: Date.now(),
       language,
-      model: modelId
+      model: config.model,
     };
     addSession(newSession);
 
     try {
-      // 2. Parse file using factory
       const result = await parserFactory.parseFile(file);
 
       updateSession(newId, {
@@ -47,83 +53,58 @@ export const useBookProcessor = ({ addSession, updateSession, getApiKey }: UseBo
           title: result.title,
           author: result.author,
           rawTextLength: result.text.length,
-          format: result.format
-        }
+          format: result.format,
+        },
       });
 
-      // 3. Check Limits
       if (result.text.length > CONTEXT_WINDOW_CHAR_LIMIT) {
         updateSession(newId, {
           status: 'error',
-          message: `The book is too long (${(result.text.length/1000000).toFixed(1)}M chars). It exceeds the model's context window.`
+          message: `The book is too long (${(result.text.length / 1000000).toFixed(1)}M chars). It exceeds the model's context window.`,
         });
         return;
       }
 
-      // 4. Generate Summary
-      await generateSummary(newId, result.text, result.title, result.author || 'Unknown Author', language, modelId);
+      updateSession(newId, {
+        status: 'analyzing',
+        message: `Sending to ${config.model} for deep analysis in ${language}...`,
+      });
+
+      // Use a ref-like accumulator since updateSession doesn't support functional updates
+      let accumulated = '';
+
+      await generateSummaryStream(
+        config,
+        result.title,
+        result.author || 'Unknown Author',
+        result.text,
+        language,
+        {
+          onChunk: (text) => {
+            accumulated += text;
+            updateSession(newId, { summary: accumulated, status: 'analyzing' });
+          },
+          onDone: () => {
+            updateSession(newId, { status: 'complete' });
+          },
+          onError: (message) => {
+            updateSession(newId, { status: 'error', message: `AI Error: ${message}` });
+          },
+        }
+      );
 
     } catch (e: any) {
       if (e instanceof ParseError) {
         updateSession(newId, {
           status: 'error',
-          message: `Failed to parse ${e.format.toUpperCase()}: ${e.message}`
+          message: `Failed to parse ${e.format.toUpperCase()}: ${e.message}`,
         });
       } else {
         updateSession(newId, {
           status: 'error',
-          message: `Unexpected error: ${e.message}`
+          message: `Unexpected error: ${e.message}`,
         });
       }
-    }
-  };
-
-  const generateSummary = async (sessionId: string, text: string, title: string, author: string, language: string, modelId: string) => {
-    const apiKey = getApiKey().trim();
-    if (!apiKey) {
-      updateSession(sessionId, { status: 'error', message: 'Gemini API Key is required. Please add it in the upload page settings.' });
-      return;
-    }
-
-    updateSession(sessionId, { status: 'analyzing', message: `Sending to ${modelId} for deep analysis in ${language}...` });
-
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // Use shared system instruction template
-      const systemInstruction = SYSTEM_INSTRUCTION_TEMPLATE(language);
-
-      const responseStream = await ai.models.generateContentStream({
-        model: modelId,
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: `Title: ${title}\nAuthor: ${author}\n\n${text}` }
-            ]
-          }
-        ],
-        config: {
-          temperature: DEFAULTS.TEMPERATURE,
-          systemInstruction: systemInstruction
-        }
-      });
-
-      let fullText = '';
-      
-      for await (const chunk of responseStream) {
-        const chunkText = chunk.text;
-        if (chunkText) {
-          fullText += chunkText;
-          updateSession(sessionId, { summary: fullText, status: 'analyzing' });
-        }
-      }
-
-      updateSession(sessionId, { status: 'complete' });
-
-    } catch (e: any) {
-      console.error(e);
-      updateSession(sessionId, { status: 'error', message: `Gemini API Error: ${e.message}` });
     }
   };
 
