@@ -78,7 +78,6 @@ Output MUST be in ${language} language. Use clean Markdown formatting.
 Start with YAML frontmatter:
 \`\`\`
 ---
-slug: <title in pinyin with hyphens, e.g. chan-pin-jing-li-shou-ce>
 title: <book title>
 author: <author>
 tags: [<tag1>, <tag2>]
