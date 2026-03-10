@@ -9,89 +9,33 @@ description: |
 
 # Book Distill
 
-读取书籍内容，由 Claude 自身提炼，输出结构化 Markdown。**不调用任何 AI API。**
+Expert book distiller. Read the book, extract the most valuable knowledge, output clean Markdown.
 
-## 首次使用
+## Reading the book
 
-EPUB 提取脚本依赖 `jszip` 和 `jsdom`，首次使用前需安装：
+| Format | Method |
+|--------|--------|
+| `.md` / `.txt` | Read tool |
+| `.pdf` | Read tool (specify page ranges for large files) |
+| `.epub` | Binary — extract text first: `npx tsx ~/.claude/skills/book-distill/scripts/extract_epub.ts <path>` (stdout = text, stderr = metadata) |
 
-```bash
-npm install --prefix ~/.claude/skills/book-distill/scripts
+First-time setup for EPUB: `npm install --prefix ~/.claude/skills/book-distill/scripts`
+
+## Output format
+
+Start with frontmatter (required for downstream tooling):
+
+```
+---
+slug: <title in pinyin with hyphens, e.g. chan-pin-jing-li-shou-ce>
+title: <book title>
+author: <author>
+tags: [<tag1>, <tag2>]
+---
 ```
 
-## 工作流程
+Then distill the book. Structure the content however best serves this particular book — use judgment. A one-sentence summary up front is always useful.
 
-### 1. 读取原始文本
+## Saving
 
-| 格式 | 处理方式 |
-|------|---------|
-| `.md` / `.txt` | 直接用 Read 工具读取 |
-| `.pdf` | 用 Read 工具读取（大文件指定页码范围） |
-| `.epub` | 二进制格式，用 Bash 调用提取脚本获得纯文本（见下方） |
-
-**EPUB 提取命令**（只提取文本，不调用 AI）：
-```bash
-npx tsx ~/.claude/skills/book-distill/scripts/extract_epub.ts <epub文件绝对路径>
-```
-- stdout：纯文本内容（供 Claude 阅读提炼）
-- stderr：书名、作者、字符数（信息用）
-
-文本获取后，**Claude 直接阅读并提炼**，不再调用任何命令或 API。
-
-### 2. 提炼
-
-根据书籍类型选择侧重：
-
-| 类型 | 侧重 |
-|------|------|
-| 方法论/工具书 | 框架、步骤、可操作清单 |
-| 叙事/传记 | 事件脉络、关键决策、人物洞察 |
-| 学术/理论 | 核心概念、论证结构、反驳观点 |
-| 商业/管理 | 模型、案例、结论 |
-
-**输出格式**（Markdown 文件，含 frontmatter）：
-
-```markdown
----
-slug: <书名拼音，用连字符，如 chan-pin-jing-li-shou-ce>
-title: <书名>
-author: <作者>
-tags: [<标签1>, <标签2>]
----
-
-<一句话概括：这本书解决什么问题、给谁看、核心答案是什么，1-2 句>
-
----
-
-## 核心论点
-
-- [最重要的 3-5 个观点，每条独立成立]
-
-## 章节精华
-
-### [章节名]
-- [关键知识点或方法]
-- [可操作的步骤/框架]
-
-## 金句摘录
-
-> [值得反复回味的原文句子]
-
-## 行动清单
-
-- [ ] [读完后可以立即去做的具体事项]
-
-## 延伸阅读
-
-- **《书名》（作者）**：[推荐理由]
-```
-
-### 3. 保存
-
-提炼完成后询问用户是否保存，以及保存到哪里。用 Write 工具写入用户指定路径，文件名建议 `作者-书名.md`。
-
-## 注意
-
-- 输出语言跟随用户对话语言
-- 不要照抄原文，用自己的语言重新组织；精华原句放入"金句摘录"
-- 书籍超长（>500k 字符）时，截取前 400k 字符：`... | head -c 400000`
+Ask the user where to save. Suggested filename: `作者-书名.md`.
