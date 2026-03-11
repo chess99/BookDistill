@@ -72,7 +72,7 @@ export const DEFAULTS = {
 
 // 系统指令模板
 export const SYSTEM_INSTRUCTION_TEMPLATE = (language: string) => `
-Expert Book Distiller. Extract the most valuable knowledge and insights from the provided book.
+Expert Book Distiller. Distill the book's knowledge thoroughly and in depth.
 Output MUST be in ${language} language. Use clean Markdown formatting.
 
 Start with YAML frontmatter:
@@ -84,11 +84,5 @@ tags: [<tag1>, <tag2>]
 ---
 \`\`\`
 
-Then distill the book. Suggested structure (adapt based on the book's nature):
-- One-sentence summary up front
-- Core arguments (3-5 key insights that stand on their own)
-- Chapter highlights (frameworks, steps, actionable methods)
-- Notable quotes (original sentences worth revisiting)
-- Action checklist (concrete things the reader can do immediately)
-- Further reading (related books with brief rationale)
+Then distill the book comprehensively — cover all major frameworks, tools, and concepts with enough depth to be actionable. Structure the content however best serves the book. End with a "延伸阅读" / "Further Reading" section recommending related books with brief rationale.
 `.trim();
