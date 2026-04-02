@@ -8,11 +8,12 @@
  *   book-distill                          # fully interactive
  *   book-distill -i book.epub             # pick output interactively
  *   book-distill -i book.epub -o out.md   # non-interactive
+ *   book-distill -i "https://z-lib.fm/book/xxx"  # z-library link
  *   book-distill config --init            # create example config
  *   book-distill config --show            # print current config (keys masked)
  *
  * Options:
- *   -i, --input <file>       Input file (epub, md)
+ *   -i, --input <file|url>   Input file (epub, md) or z-library URL
  *   -o, --output <file>      Output file ("-" for stdout)
  *   -l, --lang <lang>        Output language (default from config)
  *   -m, --model <id>         Model ID or "provider/model" shorthand
@@ -54,6 +55,11 @@ import {
   getRepoFolders,
   saveFileToRepo,
 } from '../src/services/githubService';
+import {
+  isZlibUrl,
+  downloadFromZlib,
+  cleanupDownload,
+} from '../src/services/zlibraryService';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -125,7 +131,7 @@ Usage:
   book-distill config --show               Print current config (keys masked)
 
 Options:
-  -i, --input <file>       Input file (.epub, .md, .markdown)
+  -i, --input <file|url>   Input file (.epub, .md, .markdown) or z-library URL
   -o, --output <file>      Output file ("-" for stdout)
   -l, --lang <lang>        Output language (default: ${config.defaults.language})
                            Available: ${langList}
@@ -145,11 +151,23 @@ Examples:
   # Use provider/model shorthand
   book-distill -m bailian/qwen3.5-plus -i book.epub
 
+  # Download from z-library and distill
+  book-distill -i "https://z-lib.fm/book/xxxxx"
+
   # Push to GitHub
   book-distill -i book.epub --github
 
   # Non-interactive (CI/scripts)
   book-distill -i book.epub -o summary.md -m bailian/qwen3.5-plus --no-interactive
+
+Z-Library Support:
+  z-library links require authentication. Set cookies in config:
+    "zlibrary": { "cookies": "name=value; name2=value2" }
+
+  How to get cookies:
+    1. Login to z-library (e.g. https://z-lib.fm) in your browser
+    2. Open Developer Tools (F12) -> Application -> Cookies
+    3. Copy all cookies as "name=value; name2=value2" format
 `);
 }
 
@@ -289,6 +307,9 @@ async function pushToGitHub(
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// Track downloaded file for cleanup
+let downloadedFilePath: string | null = null;
+
 async function main() {
   const args = parseArgs(process.argv);
 
@@ -327,7 +348,7 @@ async function main() {
 
   const interactive = args.interactive && process.stdin.isTTY;
 
-  // ── Step 1: Input file ──
+  // ── Step 1: Input file or URL ──
   let inputFile = args.input;
   if (!inputFile) {
     if (!interactive) {
@@ -339,16 +360,48 @@ async function main() {
     inputFile = await pickFile(searchDir);
   }
 
-  // Resolve ~ and relative paths
-  if (inputFile.startsWith('~')) {
-    inputFile = path.join(os.homedir(), inputFile.slice(1));
-  } else {
-    inputFile = path.resolve(inputFile);
-  }
+  // Check if input is a z-library URL
+  let isZlib = false;
+  if (isZlibUrl(inputFile)) {
+    isZlib = true;
+    process.stderr.write('\nDetected z-library URL, downloading...\n');
 
-  if (!fs.existsSync(inputFile)) {
-    console.error(`Error: File not found: ${inputFile}`);
-    process.exit(1);
+    if (!config.zlibrary?.cookies) {
+      console.error(`Error: z-library requires cookies for authentication.
+Set config.zlibrary.cookies in ${CONFIG_PATH}
+
+How to get cookies:
+1. Login to z-library (e.g. https://z-lib.fm) in your browser
+2. Open Developer Tools (F12) -> Application -> Cookies
+3. Copy all cookies as "name=value; name2=value2" format`);
+      process.exit(1);
+    }
+
+    try {
+      const result = await downloadFromZlib(inputFile, {
+        cookies: config.zlibrary.cookies,
+        timeout: config.zlibrary.timeout,
+        proxy: config.zlibrary.proxy,
+      });
+      inputFile = result.filePath;
+      downloadedFilePath = result.filePath;
+      process.stderr.write(`Downloaded: ${result.bookInfo.title} (${result.fileName})\n`);
+    } catch (e: any) {
+      console.error(`Download error: ${e.message}`);
+      process.exit(1);
+    }
+  } else {
+    // Resolve ~ and relative paths for local files
+    if (inputFile.startsWith('~')) {
+      inputFile = path.join(os.homedir(), inputFile.slice(1));
+    } else {
+      inputFile = path.resolve(inputFile);
+    }
+
+    if (!fs.existsSync(inputFile)) {
+      console.error(`Error: File not found: ${inputFile}`);
+      process.exit(1);
+    }
   }
 
   // ── Step 2: Language ──
@@ -416,12 +469,14 @@ async function main() {
     parsed = await parseFile(inputFile);
   } catch (e: any) {
     console.error(`Parse error: ${e.message}`);
+    if (downloadedFilePath) cleanupDownload(downloadedFilePath);
     process.exit(1);
   }
   process.stderr.write(`Extracted: "${parsed.title}" by ${parsed.author || 'Unknown'} (${(parsed.text.length / 1000).toFixed(0)}k chars)\n`);
 
   if (parsed.text.length > DEFAULTS.CONTEXT_WINDOW_CHAR_LIMIT) {
     console.error(`Error: Book too long (${(parsed.text.length / 1_000_000).toFixed(1)}M chars).`);
+    if (downloadedFilePath) cleanupDownload(downloadedFilePath);
     process.exit(1);
   }
 
@@ -441,6 +496,7 @@ async function main() {
     );
   } catch (e: any) {
     console.error(`AI error: ${e.message}`);
+    if (downloadedFilePath) cleanupDownload(downloadedFilePath);
     process.exit(1);
   }
 
@@ -463,6 +519,7 @@ async function main() {
       fs.writeFileSync(outPath, contentWithFrontmatter, 'utf-8');
       process.stderr.write(`Written to ${outPath}\n`);
     }
+    if (downloadedFilePath) cleanupDownload(downloadedFilePath);
     return;
   }
 
@@ -473,8 +530,10 @@ async function main() {
       process.stderr.write(`Published: ${url}\n`);
     } catch (e: any) {
       console.error(`GitHub error: ${e.message}`);
+      if (downloadedFilePath) cleanupDownload(downloadedFilePath);
       process.exit(1);
     }
+    if (downloadedFilePath) cleanupDownload(downloadedFilePath);
     return;
   }
 
@@ -493,14 +552,19 @@ async function main() {
         process.stderr.write(`Published: ${url}\n`);
       } catch (e: any) {
         console.error(`GitHub error: ${e.message}`);
+        if (downloadedFilePath) cleanupDownload(downloadedFilePath);
         process.exit(1);
       }
     }
+    // Cleanup downloaded file
+    if (downloadedFilePath) cleanupDownload(downloadedFilePath);
     return;
   }
 
   // Non-interactive fallback: stdout
   process.stdout.write(contentWithFrontmatter);
+  // Cleanup downloaded file
+  if (downloadedFilePath) cleanupDownload(downloadedFilePath);
 }
 
 main().catch(e => {

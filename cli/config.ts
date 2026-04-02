@@ -28,6 +28,15 @@ export interface ModelShortcut {
   [alias: string]: Record<string, never>;
 }
 
+export interface ZlibraryConfig {
+  /** Cookie 字符串，格式：name=value; name2=value2 */
+  cookies?: string;
+  /** 下载超时（毫秒），默认 60000 */
+  timeout?: number;
+  /** HTTP 代理服务器，格式：http://host:port 或 http://user:pass@host:port */
+  proxy?: string;
+}
+
 export interface GitHubConfig {
   token: string;
   owner: string;
@@ -50,6 +59,9 @@ export interface BookDistillConfig {
   };
 
   github?: GitHubConfig;
+
+  /** Z-Library 下载配置 */
+  zlibrary?: ZlibraryConfig;
 }
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -218,6 +230,13 @@ export function initConfig(): void {
       repo: 'your-repo',
       path: 'notes/books',
     },
+    zlibrary: {
+      // How to get cookies:
+      // 1. Login to z-library (e.g. https://z-lib.fm) in your browser
+      // 2. Open Developer Tools (F12) -> Application -> Cookies
+      // 3. Copy cookies as "name=value; name2=value2" format
+      cookies: 'name=value; name2=value2',
+    },
   };
 
   writeConfig(example);
@@ -239,6 +258,11 @@ export function printConfig(config: BookDistillConfig): void {
   if (masked.github?.token && masked.github.token.length > 8) {
     masked.github.token =
       masked.github.token.slice(0, 6) + '...' + masked.github.token.slice(-4);
+  }
+  // Mask zlibrary cookies
+  if (masked.zlibrary?.cookies && masked.zlibrary.cookies.length > 20) {
+    masked.zlibrary.cookies =
+      masked.zlibrary.cookies.slice(0, 10) + '...' + masked.zlibrary.cookies.slice(-10);
   }
 
   console.log(JSON.stringify(masked, null, 2));
