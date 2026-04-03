@@ -159,11 +159,18 @@ export async function downloadFromZlib(
 
     const page = await context.newPage();
 
-    // 设置下载处理器
+    // 设置下载处理器（注意：download 事件是 page 级别，不是 context 级别）
+    let resolveDownload!: (path: string) => void;
+    let rejectDownload!: (err: Error) => void;
     const downloadPromise = new Promise<string>((resolve, reject) => {
-      const timeoutId = setTimeout(() => reject(new Error('Download timeout')), timeout);
+      resolveDownload = resolve;
+      rejectDownload = reject;
+    });
 
-      page.on('download', async (download) => {
+    const timeoutId = setTimeout(() => rejectDownload(new Error('Download timeout')), timeout);
+
+    const bindDownloadHandler = (p: Page) => {
+      p.on('download', async (download) => {
         clearTimeout(timeoutId);
         try {
           const suggestedName = download.suggestedFilename();
@@ -172,13 +179,14 @@ export async function downloadFromZlib(
           console.error(`Saving download to: ${savePath}`);
           await download.saveAs(savePath);
           console.error(`Download saved successfully`);
-          resolve(savePath);
+          resolveDownload(savePath);
         } catch (e: any) {
           console.error(`Download saveAs error: ${e.message}`);
-          reject(e);
+          rejectDownload(e);
         }
       });
-    });
+    };
+    bindDownloadHandler(page);
 
     // 访问页面
     console.error(`Navigating to ${url}...`);
@@ -259,33 +267,25 @@ export async function downloadFromZlib(
     if (currentUrl.includes('/dl/')) {
       console.error('Redirected to mirror selection page, selecting a mirror...');
       
-      // 选择一个镜像（优先英语，然后中文，再随机）
-      const mirrorSelectors = [
-        'a[href*="en.z-lib.fm/dl/"]',
-        'a[href*="z-lib.fm/dl/"]',  // 默认英语
-        'a[href*="zh.z-lib.fm/dl/"]', // 中文
-        'a[href^="http"][href*="/dl/"]', // 任意镜像
-      ];
-      
-      let mirrorClicked = false;
-      for (const selector of mirrorSelectors) {
-        try {
-          const mirrorBtn = await page.$(selector);
-          if (mirrorBtn) {
-            const href = await mirrorBtn.getAttribute('href');
-            console.error(`Clicking mirror: ${href}`);
-            await mirrorBtn.click();
-            mirrorClicked = true;
-            break;
-          }
-        } catch {
-          // Continue to next selector
-        }
-      }
-      
-      if (!mirrorClicked) {
+      // 收集所有 /dl/ 链接，选一个与当前域名不同的
+      const allDlHrefs = await page.$$eval('a[href*="/dl/"]', els =>
+        els.map(e => e.getAttribute('href')).filter(Boolean) as string[]
+      );
+      const currentHost = new URL(currentUrl).hostname;
+      const mirrorHref = allDlHrefs.find(href => {
+        const linkHost = href.startsWith('http') ? new URL(href).hostname : '';
+        return linkHost && linkHost !== currentHost;
+      });
+
+      if (!mirrorHref) {
         throw new Error('Could not find a download mirror on the language selection page');
       }
+
+      // 在新 page 上触发下载，绑定 download 处理器到新 page
+      console.error(`Opening mirror URL in new page: ${mirrorHref}`);
+      const dlPage = await context.newPage();
+      bindDownloadHandler(dlPage);
+      dlPage.goto(mirrorHref).catch(() => {/* download starts, ignore navigation error */});
     }
 
     // 等待下载完成
