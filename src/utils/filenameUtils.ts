@@ -91,6 +91,14 @@ export function generateMarkdownWithFrontmatter(
 ): string {
   const slug = generateBookSlug(author, title);
 
+  // 过滤推理模型的 <think>...</think> 标签
+  let cleaned = content.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+
+  // 移除 AI 自己生成的 frontmatter（避免双层）
+  cleaned = cleaned.replace(/^---\n[\s\S]*?\n---\n*/m, '').trim();
+  // 也处理 AI 输出的 ```yaml ... ``` 包裹的 frontmatter（包括空块）
+  cleaned = cleaned.replace(/^```ya?ml\n(---\n[\s\S]*?\n---\n)?```\n*/m, '').trim();
+
   const frontmatter = `---
 slug: ${slug}
 ${tags && tags.length > 0 ? `tags: [${tags.join(', ')}]` : ''}
@@ -98,5 +106,5 @@ ${tags && tags.length > 0 ? `tags: [${tags.join(', ')}]` : ''}
 
 `;
 
-  return frontmatter + content;
+  return frontmatter + cleaned;
 }

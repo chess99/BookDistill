@@ -14,22 +14,10 @@
  * - 1lib.sk
  */
 
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page } from 'playwright';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-
-// z-library 镜像域名列表
-const ZLIB_DOMAINS = [
-  'z-lib.fm',
-  'z-library.sk',
-  'singlelogin.re',
-  '1lib.sk',
-  'z-lib.org',
-  'booksc.org',
-  'booksc.eu',
-  'booksc.xyz',
-];
 
 // 链接匹配正则
 const ZLIB_URL_PATTERN = /^https?:\/\/([a-z0-9-]+\.)?(z-lib\.fm|z-library\.sk|singlelogin\.re|1lib\.sk|z-lib\.org|booksc\.org|booksc\.eu|booksc\.xyz)/i;
@@ -181,9 +169,12 @@ export async function downloadFromZlib(
           const suggestedName = download.suggestedFilename();
           fileName = suggestedName;
           const savePath = path.join(downloadDir, suggestedName);
+          console.error(`Saving download to: ${savePath}`);
           await download.saveAs(savePath);
+          console.error(`Download saved successfully`);
           resolve(savePath);
-        } catch (e) {
+        } catch (e: any) {
+          console.error(`Download saveAs error: ${e.message}`);
           reject(e);
         }
       });
