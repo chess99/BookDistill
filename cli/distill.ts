@@ -47,6 +47,7 @@ import {
 import { NodeFileAdapter, NodeDOMParserAdapter } from './adapters/nodeAdapters';
 import { parseEpubFile } from '../src/services/parsers/epubParser.universal';
 import { parseMarkdownFile } from '../src/services/parsers/markdownParser.universal';
+import { parsePdfFile } from '../src/services/parsers/pdfParser.universal';
 import { DEFAULTS, LANGUAGES, SYSTEM_INSTRUCTION_TEMPLATE } from '../src/config/defaults';
 import { generateBookFilename, generateMarkdownWithFrontmatter } from '../src/utils/filenameUtils';
 import {
@@ -131,7 +132,7 @@ Usage:
   book-distill config --show               Print current config (keys masked)
 
 Options:
-  -i, --input <file|url>   Input file (.epub, .md, .markdown) or z-library URL
+  -i, --input <file|url>   Input file (.epub, .pdf, .md, .markdown) or z-library URL
   -o, --output <file>      Output file ("-" for stdout)
   -l, --lang <lang>        Output language (default: ${config.defaults.language})
                            Available: ${langList}
@@ -183,13 +184,17 @@ async function parseFile(filePath: string) {
       const result = await parseEpubFile(fileAdapter, { domParser });
       return { text: result.text, title: result.title, author: result.author };
     }
+    case '.pdf': {
+      const result = await parsePdfFile(fileAdapter);
+      return { text: result.text, title: result.title, author: result.author };
+    }
     case '.md':
     case '.markdown': {
       const result = await parseMarkdownFile(fileAdapter);
       return { text: result.text, title: result.title, author: result.author };
     }
     default:
-      throw new Error(`Unsupported format: ${ext}. Supported: .epub, .md, .markdown`);
+      throw new Error(`Unsupported format: ${ext}. Supported: .epub, .pdf, .md, .markdown`);
   }
 }
 
