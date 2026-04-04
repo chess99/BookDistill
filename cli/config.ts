@@ -35,6 +35,8 @@ export interface ZlibraryConfig {
   timeout?: number;
   /** HTTP 代理服务器，格式：http://host:port 或 http://user:pass@host:port */
   proxy?: string;
+  /** 下载目录，默认为系统 Downloads 文件夹（~/Downloads）。下载的书籍文件会保留在此目录。 */
+  downloadDir?: string;
 }
 
 export interface GitHubConfig {

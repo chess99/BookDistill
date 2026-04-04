@@ -116,13 +116,22 @@ export async function downloadFromZlib(
   url: string,
   options: ZlibDownloadOptions = {}
 ): Promise<ZlibDownloadResult> {
+  const defaultDownloadDir = path.join(os.homedir(), 'Downloads');
   const {
     cookies,
-    downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zlib-')),
+    downloadDir: rawDownloadDir,
     timeout = 60000,
     headless = true,
     proxy,
   } = options;
+
+  // Expand ~ and resolve to absolute path
+  const resolveDir = (d: string) =>
+    d.startsWith('~') ? path.join(os.homedir(), d.slice(1)) : path.resolve(d);
+
+  const downloadDir = rawDownloadDir
+    ? resolveDir(rawDownloadDir)
+    : fs.existsSync(defaultDownloadDir) ? defaultDownloadDir : os.tmpdir();
 
   let browser: Browser | null = null;
   let filePath = '';
