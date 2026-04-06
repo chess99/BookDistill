@@ -19,13 +19,18 @@ description: |
 
 ```
 trading-system（本 skill，编排层）
-├── signal-scanner    扫描候选标的，生成信号清单
-├── elder-screen      单标的三重滤网深度分析
-├── position-sizer    仓位计算（2%/6%原则）
-├── trade-executor    生成具体交易指令
-├── position-monitor  持仓监控与止损追踪
-├── trading-journal   交易记录与绩效统计
-└── backtest-review   系统回测与健康评估
+├── 选股层（什么值得关注）
+│   ├── canslim-screen    基本面筛选（欧奈尔CANSLIM）
+│   └── signal-scanner    技术面扫描（三重滤网快速筛选）
+├── 分析层（深度分析）
+│   └── elder-screen      三重滤网深度分析
+├── 执行层（怎么买卖）
+│   ├── position-sizer    仓位计算（2%/6%原则 + R倍数）
+│   ├── trade-executor    生成具体交易指令
+│   └── position-monitor  持仓监控与止损追踪
+└── 复盘层（回顾改进）
+    ├── trading-journal   交易记录与绩效统计
+    └── backtest-review   系统回测与健康评估
 ```
 
 所有子 skill 均位于同一 `skills/` 目录下。
@@ -41,23 +46,43 @@ trading-system（本 skill，编排层）
 适用于每个交易日开始时，从头到尾跑一遍。
 
 ```
-1. [signal-scanner]  扫描候选标的池 → 输出信号清单
-2. [elder-screen]    对信号清单中的高优标的逐一深度分析
-3. [position-sizer]  对确认的交易机会计算仓位
-4. [trade-executor]  生成今日交易指令清单
+1. [signal-scanner]   扫描候选标的池 → 输出技术面信号清单
+2. [elder-screen]     对信号清单中的高优标的逐一深度分析
+3. [position-sizer]   对确认的交易机会计算仓位（含R倍数）
+4. [trade-executor]   生成今日交易指令清单
 5. [position-monitor] 检查现有持仓状态，更新止损线
 ```
 
-### 模式 B：信号扫描
+### 模式 B：基本面驱动流程（中长线选股）
 
-用户只想看今天有什么机会，不需要立刻执行。
+用户想找值得长期持有的成长股。
+
+```
+1. [canslim-screen]  基本面筛选（CANSLIM七要素评分）
+2. [elder-screen]    对通过CANSLIM筛选的标的确认技术面时机
+3. [position-sizer]  计算仓位
+```
+
+### 模式 C：单标的完整分析
+
+用户问"XXX 现在能买吗"。
+
+```
+1. [canslim-screen]  基本面质量评估（值不值得关注）
+2. [elder-screen]    技术面时机分析（现在是不是好时机）
+3. [position-sizer]  仓位建议
+```
+
+### 模式 D：信号扫描（纯技术面）
+
+用户只想看今天有什么技术面机会。
 
 ```
 1. [signal-scanner]  扫描候选标的池
 2. [elder-screen]    对 TOP 信号做简要分析（可选）
 ```
 
-### 模式 C：持仓管理
+### 模式 E：持仓管理
 
 用户已有持仓，想检查状态。
 
@@ -66,12 +91,19 @@ trading-system（本 skill，编排层）
 2. [trade-executor]   如有需要，生成调仓指令
 ```
 
-### 模式 D：交易记录与复盘
+### 模式 F：交易记录与复盘
 
 ```
-1. [trading-journal]  记录新完成的交易
-2. [backtest-review]  定期（每周/每月）评估系统表现
+1. [trading-journal]  记录新完成的交易（含R倍数记录）
+2. [backtest-review]  定期（每周/每月）评估系统期望值和健康度
 ```
+
+### 如何选择流程
+
+- 用户说"扫描今天的机会" → 模式 D（技术面优先）
+- 用户说"这只股票值得长期持有吗" → 模式 B（基本面优先）
+- 用户说"XXX 现在能买吗" → 模式 C（两者都跑）
+- 用户说"开始今天的交易" → 模式 A（完整流程）
 
 ---
 
