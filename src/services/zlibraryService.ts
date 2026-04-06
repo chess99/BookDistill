@@ -1,11 +1,12 @@
 /**
  * Z-Library 下载服务
  *
- * 支持从 z-library 镜像站点下载书籍文件
+ * 支持从 z-library 镜像站点搜索并下载书籍文件
  *
  * 使用方式：
  * 1. 在配置文件中设置 zlibrary.cookies（从浏览器复制）
  * 2. 使用 z-library 链接作为输入：book-distill -i "https://z-lib.fm/book/xxx"
+ * 3. 使用书名搜索：book-distill -i "笑傲股市"（自动搜索并 AI 选最优版本）
  *
  * 支持的镜像域名：
  * - z-lib.fm
@@ -21,6 +22,9 @@ import * as os from 'os';
 
 // 链接匹配正则
 const ZLIB_URL_PATTERN = /^https?:\/\/([a-z0-9-]+\.)?(z-lib\.fm|z-library\.sk|singlelogin\.re|1lib\.sk|z-lib\.org|booksc\.org|booksc\.eu|booksc\.xyz)/i;
+
+/** 默认搜索域名 */
+export const ZLIB_DEFAULT_BASE = 'https://z-lib.fm';
 
 export interface ZlibDownloadOptions {
   /** Cookie 字符串，格式：name=value; name2=value2 */
@@ -50,10 +54,234 @@ export interface ZlibDownloadResult {
 }
 
 /**
+ * 搜索结果中的单本书候选
+ */
+export interface ZlibBookCandidate {
+  title: string;
+  author: string;
+  /** 文件格式，如 epub / pdf / mobi */
+  format: string;
+  /** 文件大小，如 "2.3 MB" */
+  fileSize: string;
+  /** 出版年份 */
+  year: string;
+  /** 语言 */
+  language: string;
+  /** 书籍详情页 URL */
+  bookUrl: string;
+  /** z-library 评分（如有） */
+  rating?: string;
+}
+
+/**
  * 检查 URL 是否为 z-library 链接
  */
 export function isZlibUrl(url: string): boolean {
   return ZLIB_URL_PATTERN.test(url);
+}
+
+/**
+ * 搜索 z-library，返回候选书目列表
+ */
+export async function searchZlib(
+  query: string,
+  options: ZlibDownloadOptions & { baseUrl?: string } = {}
+): Promise<ZlibBookCandidate[]> {
+  const {
+    cookies,
+    timeout = 60000,
+    headless = true,
+    proxy,
+    baseUrl = ZLIB_DEFAULT_BASE,
+  } = options;
+
+  const domain = new URL(baseUrl).hostname;
+  const searchUrl = `${baseUrl}/s/${encodeURIComponent(query)}`;
+
+  const browser = await chromium.launch({
+    headless,
+    proxy: proxy ? { server: proxy } : undefined,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+  });
+
+  try {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+
+    if (cookies) {
+      await context.addCookies(parseCookies(cookies, domain));
+    }
+
+    const page = await context.newPage();
+    console.error(`Searching z-library: ${searchUrl}`);
+    await page.goto(searchUrl, { waitUntil: 'networkidle', timeout });
+
+    // 抓取搜索结果列表
+    const candidates = await page.evaluate((baseUrl: string) => {
+      const results: Array<{
+        title: string; author: string; format: string;
+        fileSize: string; year: string; language: string;
+        bookUrl: string; rating: string;
+      }> = [];
+
+      // z-library 搜索结果的书籍卡片
+      const cards = document.querySelectorAll(
+        '.bookRow, .book-item, [class*="bookCard"], [class*="book-card"], .resItemBox, z-bookcard'
+      );
+
+      cards.forEach(card => {
+        // 标题
+        const titleEl = card.querySelector('h3 a, .title a, [class*="title"] a, a[href*="/book/"]');
+        const title = titleEl?.textContent?.trim() || '';
+        const href = titleEl?.getAttribute('href') || '';
+        const bookUrl = href.startsWith('http') ? href : (href ? `${baseUrl}${href}` : '');
+
+        if (!title || !bookUrl) return;
+
+        // 作者
+        const authorEl = card.querySelector('.authors, [class*="author"], a[href*="/author/"]');
+        const author = authorEl?.textContent?.trim() || '';
+
+        // 格式
+        const formatEl = card.querySelector('.extension, [class*="format"], .property_value');
+        const format = formatEl?.textContent?.trim().toLowerCase() || '';
+
+        // 文件大小
+        let fileSize = '';
+        const allProps = card.querySelectorAll('.property_value, [class*="size"], [class*="filesize"]');
+        allProps.forEach(el => {
+          const text = el.textContent?.trim() || '';
+          if (/\d+(\.\d+)?\s*(mb|kb|gb)/i.test(text)) fileSize = text;
+        });
+
+        // 出版年份
+        let year = '';
+        const yearEl = card.querySelector('[class*="year"], .property_value');
+        const yearMatch = card.textContent?.match(/\b(19|20)\d{2}\b/);
+        if (yearMatch) year = yearMatch[0];
+
+        // 语言
+        let language = '';
+        const langEl = card.querySelector('[class*="language"], [class*="lang"]');
+        if (langEl) language = langEl.textContent?.trim() || '';
+
+        // 评分
+        const ratingEl = card.querySelector('[class*="rating"], [class*="score"], .stars');
+        const rating = ratingEl?.textContent?.trim() || '';
+
+        results.push({ title, author, format, fileSize, year, language, bookUrl, rating });
+      });
+
+      return results;
+    }, baseUrl);
+
+    await browser.close();
+    return candidates;
+  } catch (e) {
+    await browser.close();
+    throw e;
+  }
+}
+
+/**
+ * 格式优先级（越高越好，适合文字提取）
+ */
+const FORMAT_SCORE: Record<string, number> = {
+  epub: 100,
+  mobi: 80,
+  azw3: 75,
+  fb2:  60,
+  djvu: 40,
+  pdf:  20,  // 可能是扫描版，排最低
+};
+
+/**
+ * 解析文件大小为 MB 数字
+ */
+function parseSizeMB(sizeStr: string): number {
+  const m = sizeStr.match(/([\d.]+)\s*(mb|kb|gb)/i);
+  if (!m) return 0;
+  const val = parseFloat(m[1]);
+  const unit = m[2].toLowerCase();
+  if (unit === 'kb') return val / 1024;
+  if (unit === 'gb') return val * 1024;
+  return val;
+}
+
+/**
+ * 用规则打分，选出最适合提炼的版本。
+ *
+ * 打分维度（满分 100）：
+ * - 格式 (40分)：epub > mobi > azw3 > pdf
+ * - PDF 大小 (20分)：pdf 且 <5MB 视为文字版加分，>15MB 扣分（扫描版）
+ * - 出版年份 (20分)：越新越好
+ * - 语言匹配 (15分)：中文版优先（如果 preferLang 包含 zh）
+ * - 评分 (5分)：有评分加分
+ *
+ * 选完后打印每本书的得分供用户参考。
+ */
+export function selectBestCandidate(
+  candidates: ZlibBookCandidate[],
+  preferLang = 'zh'
+): { best: ZlibBookCandidate; scores: Array<{ candidate: ZlibBookCandidate; score: number; reasons: string[] }> } {
+  const scored = candidates.map(c => {
+    let score = 0;
+    const reasons: string[] = [];
+
+    // 格式分
+    const fmt = c.format.toLowerCase().replace(/[^a-z]/g, '');
+    const fmtScore = FORMAT_SCORE[fmt] ?? 10;
+    score += Math.round(fmtScore * 0.4);
+    reasons.push(`格式 ${c.format || '?'} → ${Math.round(fmtScore * 0.4)}分`);
+
+    // PDF 大小惩罚/奖励
+    if (fmt === 'pdf' && c.fileSize) {
+      const mb = parseSizeMB(c.fileSize);
+      if (mb > 0) {
+        if (mb < 5) {
+          score += 15;
+          reasons.push(`PDF 较小(${c.fileSize})，可能是文字版 +15`);
+        } else if (mb > 15) {
+          score -= 10;
+          reasons.push(`PDF 较大(${c.fileSize})，可能是扫描版 -10`);
+        }
+      }
+    }
+
+    // 年份分（最近 10 年满分，每早 5 年减 5 分）
+    const year = parseInt(c.year) || 0;
+    if (year > 0) {
+      const currentYear = new Date().getFullYear();
+      const yearScore = Math.max(0, 20 - Math.floor((currentYear - year) / 5) * 5);
+      score += yearScore;
+      reasons.push(`年份 ${c.year} → ${yearScore}分`);
+    }
+
+    // 语言匹配
+    const lang = c.language.toLowerCase();
+    const wantChinese = preferLang.startsWith('zh') || preferLang === 'Chinese';
+    if (wantChinese && (lang.includes('chinese') || lang.includes('中文') || lang.includes('zh'))) {
+      score += 15;
+      reasons.push(`中文版 +15`);
+    } else if (!wantChinese && lang.includes('english')) {
+      score += 15;
+      reasons.push(`英文版 +15`);
+    } else if (lang) {
+      reasons.push(`语言 ${c.language}`);
+    }
+
+    // 评分
+    if (c.rating && parseFloat(c.rating) > 0) {
+      score += 5;
+      reasons.push(`有评分(${c.rating}) +5`);
+    }
+
+    return { candidate: c, score, reasons };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return { best: scored[0].candidate, scores: scored };
 }
 
 /**

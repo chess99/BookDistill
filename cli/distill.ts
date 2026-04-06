@@ -60,6 +60,9 @@ import {
 import {
   isZlibUrl,
   downloadFromZlib,
+  searchZlib,
+  selectBestCandidate,
+  ZLIB_DEFAULT_BASE,
 } from '../src/services/zlibraryService';
 import { distillLargeText } from '../src/services/hierarchicalDistill';
 
@@ -394,11 +397,16 @@ async function main() {
     inputFile = await pickFile(searchDir);
   }
 
-  // Check if input is a z-library URL
+  // ── Z-Library: 搜索词 or 直接 URL ──────────────────────────────────────────
   let isZlib = false;
-  if (isZlibUrl(inputFile)) {
+
+  // 判断是否为 z-library 搜索词（不是本地文件路径，也不是 URL）
+  const looksLikeLocalPath = inputFile.startsWith('/') || inputFile.startsWith('~') || inputFile.startsWith('.');
+  const looksLikeUrl = /^https?:\/\//i.test(inputFile);
+  const isZlibSearch = !looksLikeLocalPath && !looksLikeUrl && !fs.existsSync(inputFile);
+
+  if (isZlibSearch || isZlibUrl(inputFile)) {
     isZlib = true;
-    process.stderr.write('\nDetected z-library URL, downloading...\n');
 
     if (!config.zlibrary?.cookies) {
       console.error(`Error: z-library requires cookies for authentication.
@@ -411,13 +419,53 @@ How to get cookies:
       process.exit(1);
     }
 
+    const zlibOptions = {
+      cookies: config.zlibrary.cookies,
+      timeout: config.zlibrary.timeout,
+      proxy: config.zlibrary.proxy,
+      downloadDir: config.zlibrary.downloadDir,
+    };
+
+    // 如果是搜索词，先搜索并 AI 选最优版本
+    if (isZlibSearch) {
+      process.stderr.write(`\nSearching z-library for: "${inputFile}"...\n`);
+      try {
+        const candidates = await searchZlib(inputFile, {
+          ...zlibOptions,
+          baseUrl: ZLIB_DEFAULT_BASE,
+        });
+
+        if (candidates.length === 0) {
+          console.error(`No results found for "${inputFile}" on z-library.`);
+          process.exit(1);
+        }
+
+        // 用规则打分选最优版本
+        const lang = args.lang || config.defaults.language || 'Chinese';
+        const { best, scores } = selectBestCandidate(candidates, lang);
+
+        // 打印候选列表和得分
+        process.stderr.write(`\nFound ${candidates.length} candidates, AI selected the best one:\n`);
+        scores.slice(0, Math.min(5, scores.length)).forEach((s, i) => {
+          const mark = s.candidate === best ? '★' : ' ';
+          process.stderr.write(
+            `${mark} [${i + 1}] ${s.candidate.title} | ${s.candidate.format} | ${s.candidate.fileSize || '?'} | ${s.candidate.year || '?'} | ${s.candidate.language || '?'} | 得分:${s.score}\n`
+          );
+          process.stderr.write(`       原因: ${s.reasons.join(', ')}\n`);
+        });
+        process.stderr.write(`\n→ 选择: ${best.title} (${best.format}, ${best.fileSize || '?'}, ${best.year || '?'})\n`);
+
+        inputFile = best.bookUrl;
+      } catch (e: any) {
+        console.error(`Search error: ${e.message}`);
+        process.exit(1);
+      }
+    }
+
+    // 下载（无论是搜索词转换来的 URL 还是直接传入的 URL）
+    process.stderr.write(`\nDownloading from z-library...\n`);
     try {
-      const result = await downloadFromZlib(inputFile, {
-        cookies: config.zlibrary.cookies,
-        timeout: config.zlibrary.timeout,
-        proxy: config.zlibrary.proxy,
-        downloadDir: config.zlibrary.downloadDir,
-      });
+      const result = await downloadFromZlib(inputFile, zlibOptions);
       inputFile = result.filePath;
       process.stderr.write(`Downloaded: ${result.bookInfo.title} (${result.fileName})\n`);
     } catch (e: any) {
