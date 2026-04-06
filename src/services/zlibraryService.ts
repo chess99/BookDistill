@@ -233,15 +233,15 @@ export function selectBestCandidate(
       reasons.push(`年份 ${c.year} → ${yearScore}分`);
     }
 
-    // 语言匹配
+    // 语言匹配（+5 小加成，不强制偏向某种语言）
     const lang = c.language.toLowerCase();
     const wantChinese = preferLang.startsWith('zh') || preferLang === 'Chinese';
     if (wantChinese && (lang.includes('chinese') || lang.includes('中文') || lang.includes('zh'))) {
-      score += 15;
-      reasons.push(`中文版 +15`);
+      score += 5;
+      reasons.push(`中文版 +5`);
     } else if (!wantChinese && lang.includes('english')) {
-      score += 15;
-      reasons.push(`英文版 +15`);
+      score += 5;
+      reasons.push(`英文版 +5`);
     } else if (lang) {
       reasons.push(`语言 ${c.language}`);
     }
