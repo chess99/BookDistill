@@ -28,6 +28,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import {
   readConfig,
   resolveProvider,
@@ -60,6 +61,7 @@ import {
   isZlibUrl,
   downloadFromZlib,
 } from '../src/services/zlibraryService';
+import { distillLargeText } from '../src/services/hierarchicalDistill';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -210,9 +212,10 @@ async function generateSummary(
   providerType: string,
   modelId: string,
   apiKey: string,
-  baseUrl?: string
+  baseUrl?: string,
+  systemPromptOverride?: string
 ): Promise<string> {
-  const systemPrompt = SYSTEM_INSTRUCTION_TEMPLATE(language);
+  const systemPrompt = systemPromptOverride ?? SYSTEM_INSTRUCTION_TEMPLATE(language);
   const userMessage = `Title: ${title}\nAuthor: ${author}\n\n${text}`;
 
   if (providerType === 'gemini') {
@@ -264,6 +267,33 @@ async function generateSummary(
       }),
     });
     if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
+    const json = await res.json() as any;
+    return json.content?.[0]?.text || '';
+  }
+
+  // claude_code: Anthropic protocol via mc proxy (requires special auth headers)
+  if (providerType === 'claude_code') {
+    const base = (baseUrl || 'https://mcli.sankuai.com').replace(/\/$/, '');
+    const sessionId = crypto.randomUUID();
+    const res = await fetch(`${base}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'X-Working-Dir': process.cwd(),
+        'X-Claude-Code-Session-Id': sessionId,
+        'x-app': 'cli',
+      },
+      body: JSON.stringify({
+        model: modelId,
+        max_tokens: 16000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
+    });
+    if (!res.ok) throw new Error(`Claude (mc proxy) API error ${res.status}: ${await res.text()}`);
     const json = await res.json() as any;
     return json.content?.[0]?.text || '';
   }
@@ -477,25 +507,54 @@ How to get cookies:
   }
   process.stderr.write(`Extracted: "${parsed.title}" by ${parsed.author || 'Unknown'} (${(parsed.text.length / 1000).toFixed(0)}k chars)\n`);
 
-  if (parsed.text.length > DEFAULTS.CONTEXT_WINDOW_CHAR_LIMIT) {
-    console.error(`Error: Book too long (${(parsed.text.length / 1_000_000).toFixed(1)}M chars).`);
-    process.exit(1);
-  }
+  const HIERARCHICAL_THRESHOLD = 200_000; // chars — ~50k tokens, safe limit for most models
 
   // ── Step 5: Generate ──
-  process.stderr.write(`Sending to ${resolved.providerName}/${resolved.model} in ${language}...\n`);
   let summary: string;
   try {
-    summary = await generateSummary(
-      parsed.text,
-      parsed.title,
-      parsed.author || 'Unknown',
-      language,
-      resolved.type,
-      resolved.model,
-      resolved.apiKey,
-      resolved.baseUrl
-    );
+    if (parsed.text.length > DEFAULTS.CONTEXT_WINDOW_CHAR_LIMIT) {
+      // Text exceeds absolute limit — try hierarchical distillation
+      process.stderr.write(
+        `Book too large for single pass (${(parsed.text.length / 1000).toFixed(0)}k chars > ${(DEFAULTS.CONTEXT_WINDOW_CHAR_LIMIT / 1000).toFixed(0)}k limit).\n` +
+        `Using hierarchical distillation with ${resolved.providerName}/${resolved.model}...\n`
+      );
+      const generateFn = (text: string, title: string, author: string, systemPrompt: string) =>
+        generateSummary(text, title, author, language, resolved.type, resolved.model, resolved.apiKey, resolved.baseUrl, systemPrompt);
+      summary = await distillLargeText(
+        parsed.text,
+        parsed.title,
+        parsed.author || 'Unknown',
+        language,
+        generateFn
+      );
+    } else if (parsed.text.length > HIERARCHICAL_THRESHOLD) {
+      // Text is large but within absolute limit — use hierarchical for better quality
+      process.stderr.write(
+        `Book too large for single pass (${(parsed.text.length / 1000).toFixed(0)}k chars), using hierarchical distillation...\n` +
+        `Provider: ${resolved.providerName}/${resolved.model}\n`
+      );
+      const generateFn = (text: string, title: string, author: string, systemPrompt: string) =>
+        generateSummary(text, title, author, language, resolved.type, resolved.model, resolved.apiKey, resolved.baseUrl, systemPrompt);
+      summary = await distillLargeText(
+        parsed.text,
+        parsed.title,
+        parsed.author || 'Unknown',
+        language,
+        generateFn
+      );
+    } else {
+      process.stderr.write(`Sending to ${resolved.providerName}/${resolved.model} in ${language}...\n`);
+      summary = await generateSummary(
+        parsed.text,
+        parsed.title,
+        parsed.author || 'Unknown',
+        language,
+        resolved.type,
+        resolved.model,
+        resolved.apiKey,
+        resolved.baseUrl
+      );
+    }
   } catch (e: any) {
     console.error(`AI error: ${e.message}`);
     process.exit(1);

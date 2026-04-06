@@ -14,7 +14,7 @@ import * as path from 'path';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ProviderType = 'gemini' | 'openai' | 'anthropic' | 'openai_compatible';
+export type ProviderType = 'gemini' | 'openai' | 'anthropic' | 'openai_compatible' | 'claude_code';
 
 export interface ProviderConfig {
   apiKey: string;
