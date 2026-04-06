@@ -71,6 +71,8 @@ export interface ZlibBookCandidate {
   bookUrl: string;
   /** z-library 评分（如有） */
   rating?: string;
+  /** z-library 质量分（如有，0-10） */
+  quality?: string;
 }
 
 /**
@@ -117,60 +119,33 @@ export async function searchZlib(
     console.error(`Searching z-library: ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: 'networkidle', timeout });
 
-    // 抓取搜索结果列表
+    // 抓取搜索结果列表（z-library 使用 <z-bookcard> 自定义元素，数据在 attributes 中）
     const candidates = await page.evaluate((baseUrl: string) => {
       const results: Array<{
         title: string; author: string; format: string;
         fileSize: string; year: string; language: string;
-        bookUrl: string; rating: string;
+        bookUrl: string; rating: string; quality: string;
       }> = [];
 
-      // z-library 搜索结果的书籍卡片
-      const cards = document.querySelectorAll(
-        '.bookRow, .book-item, [class*="bookCard"], [class*="book-card"], .resItemBox, z-bookcard'
-      );
+      document.querySelectorAll('z-bookcard').forEach(card => {
+        const href = card.getAttribute('href') || '';
+        if (!href) return;
+        const bookUrl = href.startsWith('http') ? href : `${baseUrl}${href}`;
 
-      cards.forEach(card => {
-        // 标题
-        const titleEl = card.querySelector('h3 a, .title a, [class*="title"] a, a[href*="/book/"]');
-        const title = titleEl?.textContent?.trim() || '';
-        const href = titleEl?.getAttribute('href') || '';
-        const bookUrl = href.startsWith('http') ? href : (href ? `${baseUrl}${href}` : '');
+        // 标题：从 href 路径提取，或从 shadow DOM / 子元素取
+        const titleFromHref = href.split('/').pop()?.replace(/\.html$/, '').replace(/-/g, ' ') || '';
 
-        if (!title || !bookUrl) return;
-
-        // 作者
-        const authorEl = card.querySelector('.authors, [class*="author"], a[href*="/author/"]');
-        const author = authorEl?.textContent?.trim() || '';
-
-        // 格式
-        const formatEl = card.querySelector('.extension, [class*="format"], .property_value');
-        const format = formatEl?.textContent?.trim().toLowerCase() || '';
-
-        // 文件大小
-        let fileSize = '';
-        const allProps = card.querySelectorAll('.property_value, [class*="size"], [class*="filesize"]');
-        allProps.forEach(el => {
-          const text = el.textContent?.trim() || '';
-          if (/\d+(\.\d+)?\s*(mb|kb|gb)/i.test(text)) fileSize = text;
+        results.push({
+          title: titleFromHref,
+          author: '',                                          // 详情页再取，搜索页 attr 无作者
+          format: card.getAttribute('extension') || '',
+          fileSize: card.getAttribute('filesize') || '',
+          year: card.getAttribute('year') || '',
+          language: card.getAttribute('language') || '',
+          bookUrl,
+          rating: card.getAttribute('rating') || '',
+          quality: card.getAttribute('quality') || '',
         });
-
-        // 出版年份
-        let year = '';
-        const yearEl = card.querySelector('[class*="year"], .property_value');
-        const yearMatch = card.textContent?.match(/\b(19|20)\d{2}\b/);
-        if (yearMatch) year = yearMatch[0];
-
-        // 语言
-        let language = '';
-        const langEl = card.querySelector('[class*="language"], [class*="lang"]');
-        if (langEl) language = langEl.textContent?.trim() || '';
-
-        // 评分
-        const ratingEl = card.querySelector('[class*="rating"], [class*="score"], .stars');
-        const rating = ratingEl?.textContent?.trim() || '';
-
-        results.push({ title, author, format, fileSize, year, language, bookUrl, rating });
       });
 
       return results;
@@ -271,10 +246,19 @@ export function selectBestCandidate(
       reasons.push(`语言 ${c.language}`);
     }
 
-    // 评分
-    if (c.rating && parseFloat(c.rating) > 0) {
-      score += 5;
-      reasons.push(`有评分(${c.rating}) +5`);
+    // 评分 + 质量分（quality 是扫描质量，0=差/扫描版，5=好）
+    const rating = parseFloat(c.rating || '0');
+    const quality = parseFloat(c.quality || '0');
+    if (rating > 0) {
+      score += Math.round(rating);  // 最多 5 分
+      reasons.push(`评分 ${c.rating} +${Math.round(rating)}`);
+    }
+    if (quality >= 4) {
+      score += 8;
+      reasons.push(`质量分 ${c.quality} +8`);
+    } else if (quality > 0 && quality < 2) {
+      score -= 5;
+      reasons.push(`质量分低(${c.quality}) -5`);
     }
 
     return { candidate: c, score, reasons };
