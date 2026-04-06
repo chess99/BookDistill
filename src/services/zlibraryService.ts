@@ -136,6 +136,7 @@ export async function downloadFromZlib(
   let browser: Browser | null = null;
   let filePath = '';
   let fileName = '';
+  let bookInfo: ZlibBookInfo = { title: '', format: '' };
 
   try {
     // 解析域名
@@ -169,138 +170,173 @@ export async function downloadFromZlib(
     const page = await context.newPage();
 
     // 设置下载处理器（注意：download 事件是 page 级别，不是 context 级别）
+    // 检测是否为直接下载 URL（/dl/ 路径会直接触发下载）
+    const isDlUrl = urlObj.pathname.startsWith('/dl/');
+
     let resolveDownload!: (path: string) => void;
     let rejectDownload!: (err: Error) => void;
-    const downloadPromise = new Promise<string>((resolve, reject) => {
-      resolveDownload = resolve;
-      rejectDownload = reject;
-    });
-
-    const timeoutId = setTimeout(() => rejectDownload(new Error('Download timeout')), timeout);
+    let downloadPromise: Promise<string>;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const bindDownloadHandler = (p: Page) => {
+      downloadPromise = new Promise<string>((resolve, reject) => {
+        resolveDownload = resolve;
+        rejectDownload = reject;
+      });
+      timeoutId = setTimeout(() => rejectDownload(new Error('Download timeout')), timeout);
       p.on('download', async (download) => {
         clearTimeout(timeoutId);
         try {
           const suggestedName = download.suggestedFilename();
           fileName = suggestedName;
           const savePath = path.join(downloadDir, suggestedName);
-          console.error(`Saving download to: ${savePath}`);
-          await download.saveAs(savePath);
-          console.error(`Download saved successfully`);
+          console.error(`Download started: ${suggestedName}, saving to: ${savePath}`);
+          // Wait for download to complete, then use path() to get temp file
+          const tmpPath = await download.path();
+          if (!tmpPath) {
+            throw new Error('Download failed: no temp path available (download may have been canceled by browser)');
+          }
+          console.error(`Download completed to temp: ${tmpPath}`);
+          fs.copyFileSync(tmpPath, savePath);
+          console.error(`Download copied to: ${savePath}`);
           resolveDownload(savePath);
         } catch (e: any) {
-          console.error(`Download saveAs error: ${e.message}`);
+          console.error(`Download handler error: ${e.message}`);
           rejectDownload(e);
         }
       });
     };
-    bindDownloadHandler(page);
 
-    // 访问页面
-    console.error(`Navigating to ${url}...`);
-    await page.goto(url, { waitUntil: 'networkidle', timeout });
+    if (isDlUrl) {
+      // 直接下载 URL：用 waitForEvent('download') + 不等待页面加载的 goto
+      console.error(`Direct download URL detected, navigating to ${url}...`);
+      const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout }),
+        page.goto(url, { waitUntil: 'commit', timeout }).catch(() => {/* expected: "Download is starting" */}),
+      ]);
 
-    // 检查是否需要登录
-    const needsLogin = await page.evaluate(() => {
-      const loginForm = document.querySelector('form[action*="login"], .login-form');
-      const loginButton = document.querySelector('a[href*="login"], button[type="submit"][class*="login"]');
-      return !!(loginForm || loginButton);
-    });
+      console.error(`Download started: ${download.suggestedFilename()}`);
+      fileName = download.suggestedFilename();
+      const savePath = path.join(downloadDir, fileName);
 
-    if (needsLogin && !cookies) {
-      throw new Error(
-        'Z-Library requires login. Please provide cookies in config.\n' +
-        'How to get cookies:\n' +
-        '1. Login to z-library in your browser\n' +
-        '2. Open Developer Tools (F12) -> Application -> Cookies\n' +
-        '3. Copy all cookies as "name=value; name2=value2" format\n' +
-        '4. Add to config: zlibrary.cookies = "..."'
-      );
-    }
-
-    // 提取书籍信息
-    const bookInfo = await extractBookInfo(page);
-    console.error(`Found book: ${bookInfo.title} by ${bookInfo.author || 'Unknown'}`);
-
-    // 查找下载按钮
-    const downloadSelectors = [
-      'a[href*="download"]',
-      'button:has-text("Download")',
-      '.download-link',
-      'a.btn-download',
-      '[class*="download"]',
-      'a[href*="/dl/"]',
-    ];
-
-    let downloadClicked = false;
-    for (const selector of downloadSelectors) {
-      try {
-        const element = await page.waitForSelector(selector, { timeout: 5000 });
-        if (element) {
-          console.error(`Clicking download button: ${selector}`);
-          await element.click();
-          downloadClicked = true;
-          break;
-        }
-      } catch {
-        // Continue to next selector
+      const tmpPath = await download.path();
+      if (!tmpPath) {
+        throw new Error('Download failed: temp path unavailable');
       }
-    }
+      console.error(`Download completed, copying to: ${savePath}`);
+      fs.copyFileSync(tmpPath, savePath);
+      filePath = savePath;
+      // Infer book info from filename
+      const ext = path.extname(fileName).slice(1).toLowerCase();
+      bookInfo = { title: path.basename(fileName, path.extname(fileName)), format: ext };
+    } else {
+      // 书籍详情页：先导航，再找下载按钮
+      bindDownloadHandler(page);
 
-    if (!downloadClicked) {
-      // 尝试直接查找所有链接
-      const links = await page.$$('a');
-      for (const link of links) {
-        const href = await link.getAttribute('href');
-        const text = await link.textContent();
-        if (href && (href.includes('download') || text?.toLowerCase().includes('download'))) {
-          console.error(`Found download link: ${href}`);
-          await link.click();
-          downloadClicked = true;
-          break;
-        }
-      }
-    }
+      console.error(`Navigating to ${url}...`);
+      await page.goto(url, { waitUntil: 'networkidle', timeout });
 
-    if (!downloadClicked) {
-      throw new Error('Could not find download button on the page');
-    }
-
-    // 等待页面变化 - z-library 会跳转到语言选择页面
-    console.error('Waiting for mirror selection page...');
-    await page.waitForTimeout(2000);
-
-    // 检查是否跳转到语言选择页面
-    const currentUrl = page.url();
-    if (currentUrl.includes('/dl/')) {
-      console.error('Redirected to mirror selection page, selecting a mirror...');
-      
-      // 收集所有 /dl/ 链接，选一个与当前域名不同的
-      const allDlHrefs = await page.$$eval('a[href*="/dl/"]', els =>
-        els.map(e => e.getAttribute('href')).filter(Boolean) as string[]
-      );
-      const currentHost = new URL(currentUrl).hostname;
-      const mirrorHref = allDlHrefs.find(href => {
-        const linkHost = href.startsWith('http') ? new URL(href).hostname : '';
-        return linkHost && linkHost !== currentHost;
+      // 检查是否需要登录
+      const needsLogin = await page.evaluate(() => {
+        const loginForm = document.querySelector('form[action*="login"], .login-form');
+        const loginButton = document.querySelector('a[href*="login"], button[type="submit"][class*="login"]');
+        return !!(loginForm || loginButton);
       });
 
-      if (!mirrorHref) {
-        throw new Error('Could not find a download mirror on the language selection page');
+      if (needsLogin && !cookies) {
+        throw new Error(
+          'Z-Library requires login. Please provide cookies in config.\n' +
+          'How to get cookies:\n' +
+          '1. Login to z-library in your browser\n' +
+          '2. Open Developer Tools (F12) -> Application -> Cookies\n' +
+          '3. Copy all cookies as "name=value; name2=value2" format\n' +
+          '4. Add to config: zlibrary.cookies = "..."'
+        );
       }
 
-      // 在新 page 上触发下载，绑定 download 处理器到新 page
-      console.error(`Opening mirror URL in new page: ${mirrorHref}`);
-      const dlPage = await context.newPage();
-      bindDownloadHandler(dlPage);
-      dlPage.goto(mirrorHref).catch(() => {/* download starts, ignore navigation error */});
-    }
+      // 提取书籍信息
+      bookInfo = await extractBookInfo(page);
+      console.error(`Found book: ${bookInfo.title} by ${bookInfo.author || 'Unknown'}`);
 
-    // 等待下载完成
-    console.error('Waiting for download...');
-    filePath = await downloadPromise;
-    console.error(`Downloaded to: ${filePath}`);
+      // 查找下载按钮
+      const downloadSelectors = [
+        'a[href*="download"]',
+        'button:has-text("Download")',
+        '.download-link',
+        'a.btn-download',
+        '[class*="download"]',
+        'a[href*="/dl/"]',
+      ];
+
+      let downloadClicked = false;
+      for (const selector of downloadSelectors) {
+        try {
+          const element = await page.waitForSelector(selector, { timeout: 5000 });
+          if (element) {
+            console.error(`Clicking download button: ${selector}`);
+            await element.click();
+            downloadClicked = true;
+            break;
+          }
+        } catch {
+          // Continue to next selector
+        }
+      }
+
+      if (!downloadClicked) {
+        // 尝试直接查找所有链接
+        const links = await page.$$('a');
+        for (const link of links) {
+          const href = await link.getAttribute('href');
+          const text = await link.textContent();
+          if (href && (href.includes('download') || text?.toLowerCase().includes('download'))) {
+            console.error(`Found download link: ${href}`);
+            await link.click();
+            downloadClicked = true;
+            break;
+          }
+        }
+      }
+
+      if (!downloadClicked) {
+        throw new Error('Could not find download button on the page');
+      }
+
+      // 等待页面变化 - z-library 会跳转到语言选择页面
+      console.error('Waiting for mirror selection page...');
+      await page.waitForTimeout(2000);
+
+      // 检查是否跳转到语言选择页面
+      const currentUrl = page.url();
+      if (currentUrl.includes('/dl/')) {
+        console.error('Redirected to mirror selection page, selecting a mirror...');
+
+        // 收集所有 /dl/ 链接，选一个与当前域名不同的
+        const allDlHrefs = await page.$$eval('a[href*="/dl/"]', els =>
+          els.map(e => e.getAttribute('href')).filter(Boolean) as string[]
+        );
+        const currentHost = new URL(currentUrl).hostname;
+        const mirrorHref = allDlHrefs.find(href => {
+          const linkHost = href.startsWith('http') ? new URL(href).hostname : '';
+          return linkHost && linkHost !== currentHost;
+        });
+
+        if (!mirrorHref) {
+          throw new Error('Could not find a download mirror on the language selection page');
+        }
+
+        // 在新 page 上触发下载，绑定 download 处理器到新 page
+        console.error(`Opening mirror URL in new page: ${mirrorHref}`);
+        const dlPage = await context.newPage();
+        bindDownloadHandler(dlPage);
+        dlPage.goto(mirrorHref).catch(() => {/* download starts, ignore navigation error */});
+      }
+
+      // 等待下载完成
+      console.error('Waiting for download...');
+      filePath = await downloadPromise;
+      console.error(`Downloaded to: ${filePath}`);
+    }
 
     await browser.close();
     browser = null;
