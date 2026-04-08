@@ -45,26 +45,25 @@ import {
   pickOutputDestination,
   pickGitHubFolder,
 } from './prompt';
-import { NodeFileAdapter, NodeDOMParserAdapter } from './adapters/nodeAdapters';
-import { parseEpubFile } from '../src/services/parsers/epubParser.universal';
-import { parseMarkdownFile } from '../src/services/parsers/markdownParser.universal';
-import { parsePdfFile } from '../src/services/parsers/pdfParser.universal';
-import { DEFAULTS, LANGUAGES, SYSTEM_INSTRUCTION_TEMPLATE } from '../src/config/defaults';
-import { generateBookFilename, generateMarkdownWithFrontmatter } from '../src/utils/filenameUtils';
+import { parseEpub } from '../src/lib/parsers/epub';
+import { parseMarkdown } from '../src/lib/parsers/markdown';
+import { parsePdf } from '../src/lib/parsers/pdf';
+import { DEFAULTS, LANGUAGES, SYSTEM_INSTRUCTION_TEMPLATE } from '../src/constants';
+import { generateBookFilename, generateMarkdownWithFrontmatter } from '../src/lib/filename';
 import {
   validateToken,
   getUserRepos,
   getRepoFolders,
   saveFileToRepo,
-} from '../src/services/githubService';
+} from '../src/lib/github';
 import {
   isZlibUrl,
   downloadFromZlib,
   searchZlib,
   selectBestCandidate,
   ZLIB_DEFAULT_BASE,
-} from '../src/services/zlibraryService';
-import { distillLargeText } from '../src/services/hierarchicalDistill';
+} from '../src/lib/zlibrary';
+import { distillLargeText } from '../src/lib/hierarchical';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -183,23 +182,11 @@ Z-Library Support:
 
 async function parseFile(filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
-  const fileAdapter = NodeFileAdapter.fromPath(filePath);
-
   switch (ext) {
-    case '.epub': {
-      const domParser = new NodeDOMParserAdapter();
-      const result = await parseEpubFile(fileAdapter, { domParser });
-      return { text: result.text, title: result.title, author: result.author };
-    }
-    case '.pdf': {
-      const result = await parsePdfFile(fileAdapter);
-      return { text: result.text, title: result.title, author: result.author };
-    }
+    case '.epub':    return parseEpub(filePath);
+    case '.pdf':     return parsePdf(filePath);
     case '.md':
-    case '.markdown': {
-      const result = await parseMarkdownFile(fileAdapter);
-      return { text: result.text, title: result.title, author: result.author };
-    }
+    case '.markdown': return parseMarkdown(filePath);
     default:
       throw new Error(`Unsupported format: ${ext}. Supported: .epub, .pdf, .md, .markdown`);
   }

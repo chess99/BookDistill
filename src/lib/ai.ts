@@ -3,7 +3,7 @@
  */
 
 import { AIProviderConfig } from '../types';
-import { SYSTEM_INSTRUCTION_TEMPLATE } from '../config/defaults';
+import { SYSTEM_INSTRUCTION_TEMPLATE } from '../constants';
 
 export interface StreamCallbacks {
   onChunk: (text: string) => void;
@@ -78,8 +78,10 @@ async function callOpenAICompatible(
   userMessage: string,
   callbacks: StreamCallbacks
 ) {
-  const baseUrl = (config.baseUrl?.trim() || 'https://api.openai.com').replace(/\/$/, '');
-  const url = `${baseUrl}/v1/chat/completions`;
+  // baseUrl 可能已含 /v1（如 minimax），也可能不含（如 openai 默认）
+  const rawBase = (config.baseUrl?.trim() || 'https://api.openai.com').replace(/\/$/, '');
+  const baseUrl = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+  const url = `${baseUrl}/chat/completions`;
 
   const response = await fetch(url, {
     method: 'POST',

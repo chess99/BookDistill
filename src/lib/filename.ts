@@ -4,7 +4,7 @@
  */
 
 // 导出 slug 生成函数
-import { generateBookSlug } from './slugGenerator';
+import { generateBookSlug } from './slug';
 export { generateBookSlug };
 
 /**
