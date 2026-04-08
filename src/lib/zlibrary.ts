@@ -187,22 +187,41 @@ function parseSizeMB(sizeStr: string): number {
 /**
  * 用规则打分，选出最适合提炼的版本。
  *
- * 打分维度（满分 100）：
+ * 打分维度：
+ * - 标题相关性 (30分)：查询词关键字出现在标题中加分
  * - 格式 (40分)：epub > mobi > azw3 > pdf
- * - PDF 大小 (20分)：pdf 且 <5MB 视为文字版加分，>15MB 扣分（扫描版）
+ * - PDF 大小：pdf 且 <5MB 视为文字版加分，>15MB 扣分（扫描版），>50MB 重度扣分
  * - 出版年份 (20分)：越新越好
- * - 语言匹配 (15分)：中文版优先（如果 preferLang 包含 zh）
- * - 评分 (5分)：有评分加分
+ * - 语言匹配 (5分)：中文版小加成
+ * - 质量/评分：quality≥4 加分，<2 扣分
  *
  * 选完后打印每本书的得分供用户参考。
  */
 export function selectBestCandidate(
   candidates: ZlibBookCandidate[],
-  preferLang = 'zh'
+  preferLang = 'zh',
+  query = ''
 ): { best: ZlibBookCandidate; scores: Array<{ candidate: ZlibBookCandidate; score: number; reasons: string[] }> } {
+  // 提取查询词中的关键字（去掉作者名常见词，保留核心书名词）
+  const queryKeywords = query
+    .split(/[\s··,，。？！]+/)
+    .map(w => w.trim().toLowerCase())
+    .filter(w => w.length >= 2);
+
   const scored = candidates.map(c => {
     let score = 0;
     const reasons: string[] = [];
+
+    // 标题相关性分（最多 30 分）
+    if (queryKeywords.length > 0) {
+      const titleLower = c.title.toLowerCase();
+      const matchCount = queryKeywords.filter(kw => titleLower.includes(kw)).length;
+      if (matchCount > 0) {
+        const relScore = Math.min(30, Math.round((matchCount / queryKeywords.length) * 30));
+        score += relScore;
+        reasons.push(`标题匹配 ${matchCount}/${queryKeywords.length} 关键词 +${relScore}`);
+      }
+    }
 
     // 格式分
     const fmt = c.format.toLowerCase().replace(/[^a-z]/g, '');
@@ -217,9 +236,12 @@ export function selectBestCandidate(
         if (mb < 5) {
           score += 15;
           reasons.push(`PDF 较小(${c.fileSize})，可能是文字版 +15`);
+        } else if (mb > 50) {
+          score -= 25;
+          reasons.push(`PDF 超大(${c.fileSize})，大概率扫描版 -25`);
         } else if (mb > 15) {
-          score -= 10;
-          reasons.push(`PDF 较大(${c.fileSize})，可能是扫描版 -10`);
+          score -= 15;
+          reasons.push(`PDF 较大(${c.fileSize})，可能是扫描版 -15`);
         }
       }
     }
@@ -446,7 +468,9 @@ export async function downloadFromZlib(
       bindDownloadHandler(page);
 
       console.error(`Navigating to ${url}...`);
-      await page.goto(url, { waitUntil: 'networkidle', timeout });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+      // 等待动态内容加载（z-library 部分内容是 JS 渲染的）
+      await page.waitForTimeout(3000);
 
       // 检查是否需要登录
       const needsLogin = await page.evaluate(() => {
@@ -514,37 +538,7 @@ export async function downloadFromZlib(
         throw new Error('Could not find download button on the page');
       }
 
-      // 等待页面变化 - z-library 会跳转到语言选择页面
-      console.error('Waiting for mirror selection page...');
-      await page.waitForTimeout(2000);
-
-      // 检查是否跳转到语言选择页面
-      const currentUrl = page.url();
-      if (currentUrl.includes('/dl/')) {
-        console.error('Redirected to mirror selection page, selecting a mirror...');
-
-        // 收集所有 /dl/ 链接，选一个与当前域名不同的
-        const allDlHrefs = await page.$$eval('a[href*="/dl/"]', els =>
-          els.map(e => e.getAttribute('href')).filter(Boolean) as string[]
-        );
-        const currentHost = new URL(currentUrl).hostname;
-        const mirrorHref = allDlHrefs.find(href => {
-          const linkHost = href.startsWith('http') ? new URL(href).hostname : '';
-          return linkHost && linkHost !== currentHost;
-        });
-
-        if (!mirrorHref) {
-          throw new Error('Could not find a download mirror on the language selection page');
-        }
-
-        // 在新 page 上触发下载，绑定 download 处理器到新 page
-        console.error(`Opening mirror URL in new page: ${mirrorHref}`);
-        const dlPage = await context.newPage();
-        bindDownloadHandler(dlPage);
-        dlPage.goto(mirrorHref).catch(() => {/* download starts, ignore navigation error */});
-      }
-
-      // 等待下载完成
+      // 等待下载完成（点击 /dl/ 链接会直接触发 download 事件，无需等待页面跳转）
       console.error('Waiting for download...');
       filePath = await downloadPromise;
       console.error(`Downloaded to: ${filePath}`);

@@ -75,7 +75,7 @@ async function main() {
     }
 
     const lang = langArg || config.defaults.language || 'Chinese';
-    const { best, scores } = selectBestCandidate(candidates, lang);
+    const { best, scores } = selectBestCandidate(candidates, lang, query);
 
     process.stderr.write(`\nFound ${candidates.length} candidates. Top results:\n`);
     scores.slice(0, 5).forEach((s, i) => {
