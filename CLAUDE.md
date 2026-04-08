@@ -52,3 +52,36 @@ z-library 搜索结果使用 `<z-bookcard>` 自定义元素，数据全在 attri
 ## 下载目录
 
 原始书籍文件保存到 `config.zlibrary.downloadDir`（在 `cli/config.json` 中配置，已 gitignore）。
+
+## 输出文件命名规范
+
+提炼结果写入目标仓库（默认 `~/Notes/ai-reading/books/`），路径格式：
+
+`<分类>/<作者>-<书名>.md`
+
+### 书名
+
+- 统一使用**中文通用译名**，不用英文原名
+- **不含版本信息**（不进文件名，也不进 `title`）
+- 例外：品牌缩写可保留英文（如 `ACSM`）
+
+### Frontmatter
+
+```yaml
+slug: <书名拼音，不含作者名>
+title: <中文书名>
+author: <完整中文译名>
+tags: [标签1, 标签2]   # 行内数组，不用多行格式
+date: 'YYYY-MM-DD'
+```
+
+- `slug` 只用书名拼音，不含作者名、版本号
+- `title` 与文件名的书名部分一致
+
+### 正文第一级标题
+
+```markdown
+# 书名
+```
+
+使用中文书名，不加副标题或"综合提炼"等后缀。
