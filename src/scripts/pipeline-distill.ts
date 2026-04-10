@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 import { readConfig, resolveProvider } from '../../cli/config.js';
 import {
   DEFAULT_PIPELINE_PATH,
@@ -52,7 +53,7 @@ function spawnScript(
   timeoutMs = 600_000
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = (require('child_process') as typeof import('child_process')).spawn(
+    const child = spawn(
       'npx', ['tsx', scriptPath, ...scriptArgs],
       {
         timeout: timeoutMs,
@@ -134,8 +135,11 @@ ${existingCategories.map(c => `- ${c}`).join('\n')}
 分类：`;
 
   // 调用 AI（非流式，用简单 fetch）
-  const category = await callAISimple(provider, prompt);
-  return category.trim().replace(/^分类[：:]?\s*/i, '').trim();
+  const raw = await callAISimple(provider, prompt);
+  // 过滤 <think>...</think> 推理标签（部分模型如 MiniMax 会输出）
+  const category = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+    .replace(/^分类[：:]?\s*/i, '').trim();
+  return category || '商业管理';
 }
 
 async function callAISimple(
@@ -155,7 +159,7 @@ async function callAISimple(
       body: JSON.stringify({
         model: provider.model,
         temperature: 0,
-        max_tokens: 20,
+        max_tokens: 200,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -171,7 +175,7 @@ async function callAISimple(
     const result = await ai.models.generateContent({
       model: provider.model,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { temperature: 0, maxOutputTokens: 20 },
+      config: { temperature: 0, maxOutputTokens: 200 },
     });
     return result.text || '商业管理';
   }
@@ -188,7 +192,7 @@ async function callAISimple(
       },
       body: JSON.stringify({
         model: provider.model,
-        max_tokens: 20,
+        max_tokens: 200,
         messages: [{ role: 'user', content: prompt }],
       }),
     });

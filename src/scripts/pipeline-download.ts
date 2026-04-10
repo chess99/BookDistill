@@ -13,7 +13,7 @@
 
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import {
   DEFAULT_PIPELINE_PATH,
@@ -95,7 +95,7 @@ async function runDownloadViaNpx(title: string): Promise<DownloadResult> {
   const scriptPath = path.join(__dirname, '../../src/scripts/download.ts');
 
   return new Promise((resolve, reject) => {
-    const child = require('child_process').spawn(
+    const child = spawn(
       'npx', ['tsx', scriptPath, '--query', title],
       {
         timeout: 180_000,
