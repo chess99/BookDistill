@@ -190,6 +190,11 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
    - "联想风云 凌志军" → 全是《小米创业思考》（因为雷军写了"联想"相关内容）
    - 解决：标记失败，跳过；或尝试英文书名搜索
 
+4. **搜索结果 title 字段是 URL 编码**（已修复）
+   - `selectBestCandidate` 里的标题匹配之前对 URL 编码字符串做 includes，永远匹配不到
+   - 已在 `zlibrary.ts` 中用 `decodeURIComponent` 修复
+   - 修复后套装书/无关书会被 -80 惩罚，正确的书排到第一
+
 2. **MiniMax 等推理模型返回 `<think>` 标签**
    - distill.ts 提炼输出里会有，ingest.ts 已过滤
    - 分类推断时 Agent 自己判断，不受影响
