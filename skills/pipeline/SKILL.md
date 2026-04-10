@@ -1,3 +1,11 @@
+---
+name: pipeline
+description: |
+  无人值守的书籍批量入库 pipeline。扫描 ai-reading 延伸阅读推荐书目，自动从 z-library 下载，
+  调用 AI 提炼，推断分类后入库。当用户说"跑 pipeline"、"批量入库"、"自动下载延伸阅读"、
+  "pipeline scan/run/status/retry"，或想无人值守地处理多本书时触发。
+---
+
 # pipeline
 
 无人值守的书籍批量入库 pipeline。扫描延伸阅读推荐书目 → 自动下载 → AI 提炼 → 推断分类 → 入库。
