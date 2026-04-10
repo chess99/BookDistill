@@ -507,6 +507,31 @@ export async function downloadFromZlib(
       bookInfo = await extractBookInfo(page);
       console.error(`Found book: ${bookInfo.title} by ${bookInfo.author || 'Unknown'}`);
 
+      // 监听 context 上新页面（popup）的 download 事件
+      // z-library 的 /dl/ 链接可能带有 target="_blank"，会在新 page 触发 download
+      context.on('page', (newPage) => {
+        newPage.on('download', async (download) => {
+          if (timeoutId) clearTimeout(timeoutId);
+          try {
+            const suggestedName = download.suggestedFilename();
+            fileName = suggestedName;
+            const savePath = path.join(downloadDir, suggestedName);
+            console.error(`Download started (popup page): ${suggestedName}, saving to: ${savePath}`);
+            const tmpPath = await download.path();
+            if (!tmpPath) {
+              throw new Error('Download failed: no temp path available');
+            }
+            console.error(`Download completed to temp: ${tmpPath}`);
+            fs.copyFileSync(tmpPath, savePath);
+            console.error(`Download copied to: ${savePath}`);
+            resolveDownload(savePath);
+          } catch (e: any) {
+            console.error(`Download handler error (popup): ${e.message}`);
+            rejectDownload(e);
+          }
+        });
+      });
+
       // 查找下载按钮
       const downloadSelectors = [
         'a[href*="download"]',
@@ -522,10 +547,35 @@ export async function downloadFromZlib(
         try {
           const element = await page.waitForSelector(selector, { timeout: 5000 });
           if (element) {
-            console.error(`Clicking download button: ${selector}`);
-            await element.click();
-            downloadClicked = true;
-            break;
+            // 获取 href，如果是 /dl/ 链接，直接在当前 page 用 goto 方式触发下载（避免 popup）
+            const href = await element.getAttribute('href');
+            if (href && href.startsWith('/dl/')) {
+              const dlUrl = new URL(href, `https://${domain}`).toString();
+              console.error(`Navigating directly to dl URL: ${dlUrl}`);
+              // 重新绑定 download handler，使用 waitForEvent 更可靠
+              clearTimeout(timeoutId);
+              const [dl] = await Promise.all([
+                page.waitForEvent('download', { timeout }),
+                page.goto(dlUrl, { waitUntil: 'commit', timeout }).catch(() => {}),
+              ]);
+              const suggestedName = dl.suggestedFilename();
+              fileName = suggestedName;
+              const savePath = path.join(downloadDir, suggestedName);
+              console.error(`Download started: ${suggestedName}, saving to: ${savePath}`);
+              const tmpPath = await dl.path();
+              if (!tmpPath) throw new Error('Download failed: temp path unavailable');
+              fs.copyFileSync(tmpPath, savePath);
+              filePath = savePath;
+              console.error(`Download copied to: ${savePath}`);
+              resolveDownload(savePath);
+              downloadClicked = true;
+              break;
+            } else {
+              console.error(`Clicking download button: ${selector}`);
+              await element.click();
+              downloadClicked = true;
+              break;
+            }
           }
         } catch {
           // Continue to next selector
@@ -538,7 +588,25 @@ export async function downloadFromZlib(
         for (const link of links) {
           const href = await link.getAttribute('href');
           const text = await link.textContent();
-          if (href && (href.includes('download') || text?.toLowerCase().includes('download'))) {
+          if (href && href.startsWith('/dl/')) {
+            const dlUrl = new URL(href, `https://${domain}`).toString();
+            console.error(`Found dl link, navigating directly: ${dlUrl}`);
+            clearTimeout(timeoutId);
+            const [dl] = await Promise.all([
+              page.waitForEvent('download', { timeout }),
+              page.goto(dlUrl, { waitUntil: 'commit', timeout }).catch(() => {}),
+            ]);
+            const suggestedName = dl.suggestedFilename();
+            fileName = suggestedName;
+            const savePath = path.join(downloadDir, suggestedName);
+            const tmpPath = await dl.path();
+            if (!tmpPath) throw new Error('Download failed: temp path unavailable');
+            fs.copyFileSync(tmpPath, savePath);
+            filePath = savePath;
+            resolveDownload(savePath);
+            downloadClicked = true;
+            break;
+          } else if (href && (href.includes('download') || text?.toLowerCase().includes('download'))) {
             console.error(`Found download link: ${href}`);
             await link.click();
             downloadClicked = true;
@@ -551,10 +619,12 @@ export async function downloadFromZlib(
         throw new Error('Could not find download button on the page');
       }
 
-      // 等待下载完成（点击 /dl/ 链接会直接触发 download 事件，无需等待页面跳转）
-      console.error('Waiting for download...');
-      filePath = await downloadPromise;
-      console.error(`Downloaded to: ${filePath}`);
+      // 如果不是直接通过 dl URL 下载（filePath 还没有设置），等待 download 事件
+      if (!filePath) {
+        console.error('Waiting for download...');
+        filePath = await downloadPromise;
+        console.error(`Downloaded to: ${filePath}`);
+      }
     }
 
     await browser.close();
