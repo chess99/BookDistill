@@ -136,17 +136,20 @@ async function processOne(): Promise<boolean> {
   const item = getNextPending(pipelinePath, SECTIONS.PENDING_DOWNLOAD);
   if (!item) return false;
 
-  const { title } = item;
-  console.error(`\n[下载] ${title}`);
+  const { title, meta } = item;
+  // 用"书名 作者"搜索，避免同名书混淆
+  const searchQuery = meta.author ? `${title} ${meta.author}` : title;
+  console.error(`\n[下载] ${title}${meta.author ? ` （${meta.author}）` : ''}`);
 
   // 标记为处理中
   updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'in_progress', {
+    ...meta,
     pid: String(process.pid),
     started: new Date().toISOString(),
   });
 
   try {
-    const { filePath } = await runDownloadViaNpx(title);
+    const { filePath } = await runDownloadViaNpx(searchQuery);
     console.error(`[下载] ✓ ${title} → ${filePath}`);
     moveItem(
       pipelinePath,
@@ -154,7 +157,7 @@ async function processOne(): Promise<boolean> {
       SECTIONS.PENDING_DOWNLOAD,
       SECTIONS.PENDING_DISTILL,
       'pending',
-      { file: filePath }
+      { file: filePath, ...(meta.author ? { author: meta.author } : {}) }
     );
     return true;
   } catch (err: any) {

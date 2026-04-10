@@ -61,24 +61,41 @@ function getIngestedTitles(booksDir: string): Set<string> {
 
 // ── 扫描延伸阅读书名 ──────────────────────────────────────────────────────────
 
-function extractRecommendedBooks(mdContent: string): string[] {
-  const books: string[] = [];
+export interface BookEntry {
+  title: string;
+  author?: string;
+}
+
+function extractRecommendedBooks(mdContent: string): BookEntry[] {
+  const books: BookEntry[] = [];
+  const seen = new Set<string>();
+
   // 找到"延伸阅读"章节
   const sectionMatch = mdContent.match(/##\s*延伸阅读([\s\S]*?)(?=\n##\s|$)/);
   if (!sectionMatch) return books;
 
   const section = sectionMatch[1];
-  // 提取所有《书名》
-  const bookPattern = /《([^》]{2,40})》/g;
-  let m: RegExpExecArray | null;
-  while ((m = bookPattern.exec(section)) !== null) {
-    const title = m[1].trim();
-    // 过滤明显不是书名的（如"圣经"、"纽约时报"等）
-    if (isLikelyBookTitle(title)) {
-      books.push(title);
-    }
+  const lines = section.split('\n');
+
+  for (const line of lines) {
+    // 匹配《书名》，同时尝试提取紧跟的作者（括号内）
+    // 格式：《书名》（作者） 或 《书名》(作者) 或 **《书名》（作者）**
+    const titleMatch = line.match(/《([^》]{2,40})》/);
+    if (!titleMatch) continue;
+
+    const title = titleMatch[1].trim();
+    if (!isLikelyBookTitle(title) || seen.has(title)) continue;
+    seen.add(title);
+
+    // 提取书名后紧跟的括号作者：《书名》（作者名）或（作者名）
+    // 匹配 《书名》 之后的 （...） 或 (...)，取第一个括号内容
+    const afterTitle = line.slice(line.indexOf('》') + 1);
+    const authorMatch = afterTitle.match(/^[^（(]*[（(]([^）)]{2,30})[）)]/);
+    const author = authorMatch ? authorMatch[1].trim() : undefined;
+
+    books.push({ title, author });
   }
-  return [...new Set(books)]; // 去重
+  return books;
 }
 
 const NON_BOOK_PATTERNS = [
@@ -95,8 +112,8 @@ function isLikelyBookTitle(title: string): boolean {
   return title.length >= 2 && title.length <= 40;
 }
 
-function scanAllRecommendedBooks(booksDir: string): string[] {
-  const allBooks = new Set<string>();
+function scanAllRecommendedBooks(booksDir: string): BookEntry[] {
+  const allBooks = new Map<string, BookEntry>(); // title → entry
   if (!fs.existsSync(booksDir)) return [];
 
   function walk(dir: string) {
@@ -107,12 +124,19 @@ function scanAllRecommendedBooks(booksDir: string): string[] {
       } else if (entry.name.endsWith('.md')) {
         const content = fs.readFileSync(fullPath, 'utf-8');
         const books = extractRecommendedBooks(content);
-        for (const b of books) allBooks.add(b);
+        for (const b of books) {
+          if (!allBooks.has(b.title)) {
+            allBooks.set(b.title, b);
+          } else if (!allBooks.get(b.title)?.author && b.author) {
+            // 补充作者信息
+            allBooks.set(b.title, b);
+          }
+        }
       }
     }
   }
   walk(booksDir);
-  return [...allBooks];
+  return [...allBooks.values()];
 }
 
 // ── 模糊匹配：判断书名是否已入库 ──────────────────────────────────────────────
@@ -154,20 +178,20 @@ async function main() {
   console.error(`延伸阅读推荐：${recommended.length} 本（去重后）`);
 
   // 过滤出未入库、未在 pipeline 中的
-  const toAdd: string[] = [];
+  const toAdd: BookEntry[] = [];
   const skippedIngested: string[] = [];
   const skippedPipeline: string[] = [];
 
-  for (const title of recommended) {
-    if (isAlreadyIngested(title, ingested)) {
-      skippedIngested.push(title);
+  for (const entry of recommended) {
+    if (isAlreadyIngested(entry.title, ingested)) {
+      skippedIngested.push(entry.title);
       continue;
     }
-    if (isInPipeline(pipelinePath, title)) {
-      skippedPipeline.push(title);
+    if (isInPipeline(pipelinePath, entry.title)) {
+      skippedPipeline.push(entry.title);
       continue;
     }
-    toAdd.push(title);
+    toAdd.push(entry);
   }
 
   console.error(`\n已入库（跳过）：${skippedIngested.length} 本`);
@@ -179,15 +203,17 @@ async function main() {
     return;
   }
 
-  // 追加到 pipeline.md 待下载区
-  for (const title of toAdd) {
-    appendItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title);
+  // 追加到 pipeline.md 待下载区（附带作者信息）
+  for (const entry of toAdd) {
+    const meta: Record<string, string> = entry.author ? { author: entry.author } : {};
+    appendItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, entry.title, meta);
   }
 
   console.error(`\n✓ 已添加 ${toAdd.length} 本书到 ${pipelinePath}`);
   console.error('\n新增书目：');
-  for (const t of toAdd) {
-    console.error(`  - ${t}`);
+  for (const e of toAdd) {
+    const authorStr = e.author ? ` （${e.author}）` : '';
+    console.error(`  - ${e.title}${authorStr}`);
   }
 }
 

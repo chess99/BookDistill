@@ -1,70 +1,135 @@
 ---
 name: pipeline
 description: |
-  无人值守的书籍批量入库 pipeline。扫描 ai-reading 延伸阅读推荐书目，自动从 z-library 下载，
-  调用 AI 提炼，推断分类后入库。当用户说"跑 pipeline"、"批量入库"、"自动下载延伸阅读"、
-  "pipeline scan/run/status/retry"，或想无人值守地处理多本书时触发。
+  无人值守批量入库延伸阅读书目。Agent 主导整个流程，脚本只做辅助。
+  当用户说"跑 pipeline"、"批量入库"、"处理延伸阅读"、"pipeline scan/run/status/retry"，
+  或想批量处理多本书时触发。
 ---
 
-# pipeline
+# Pipeline — Agent 驱动的批量入库工作流
 
-无人值守的书籍批量入库 pipeline。扫描延伸阅读推荐书目 → 自动下载 → AI 提炼 → 推断分类 → 入库。
+脚本负责机械操作（搜索、下载、提炼、入库），Agent 负责判断（选书、验证、纠错）。
 
-## 用法
+## 核心原则
 
-```
-/pipeline scan     扫描未入库书目，更新 pipeline.md 待下载列表
-/pipeline run      启动调度器，并行运行下载+提炼 worker
-/pipeline status   查看当前队列状态
-/pipeline retry    将失败条目重置为待下载
-```
+- **Agent 是主体**：每个关键决策点 Agent 亲自判断，不盲目信任脚本输出
+- **脚本是工具**：搜索、下载、提炼、入库都有脚本，Agent 调用并验证结果
+- **pipeline.md 是状态**：Agent 读写这个文件跟踪进度，人也可以手动编辑
+
+---
 
 ## 子命令
 
-### scan
+### `/pipeline scan` — 扫描未入库书目
 
-扫描 ai-reading/books 所有文件的"延伸阅读"章节，提取书名，过滤已入库和已在 pipeline 中的，追加到 pipeline.md 待下载区。
+**Agent 执行步骤：**
 
+1. 扫描 `~/Notes/ai-reading/books/**/*.md` 中所有"延伸阅读"章节，提取 `《书名》（作者）` 格式的条目
+2. 对比已入库书单（扫描 books 目录文件名）
+3. 对比 pipeline.md 中已有条目
+4. 将新书目写入 pipeline.md 的"待下载"区，格式：
+   ```
+   - [ ] 书名 <!-- author: 作者名 -->
+   ```
+5. 打印新增书目供用户确认
+
+**辅助脚本（可选）：**
 ```bash
-REPO=/Users/zcs/code2/BookDistill
-npx tsx $REPO/src/scripts/pipeline-scan.ts
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/pipeline-scan.ts
 ```
 
-执行后打印新增书目，并展示 pipeline.md 的待下载区内容。
+---
 
-### run
+### `/pipeline run` — 批量处理（核心流程）
 
-启动完整 pipeline，并行运行：
-- **下载 worker**（串行，z-library 限速）：消费"待下载"，调用 download.ts
-- **提炼 worker**（并发 2）：消费"待提炼"，调用 distill.ts + AI 分类 + ingest.ts
+Agent 逐本处理，每本书走完整链路：**搜索 → Agent 选书 → 下载 → 提炼 → Agent 验分类 → 入库**。
 
-```bash
-REPO=/Users/zcs/code2/BookDistill
-npx tsx $REPO/src/scripts/pipeline-run.ts
-```
+#### 每本书的处理流程
 
-运行期间实时打印进度。Ctrl+C 安全中断，下次运行会从断点继续。
+**Step 1：搜索候选**
 
-### status
-
-读取 pipeline.md，打印各区段计数和最近失败原因。
+读取 pipeline.md 的"待下载"区，取第一条。用 `--query` 搜索，**只看候选列表，不让脚本自动下载**：
 
 ```bash
-PIPELINE=/Users/zcs/code2/BookDistill/pipeline.md
-cat $PIPELINE
+# 先只搜索，看候选（download.ts 会打印候选后自动下载第一名，所以用 Bash 捕获 stderr）
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --query "书名 作者名" 2>&1
 ```
 
-或用 Claude 分析：读取 pipeline.md，统计各区段数量，列出最近 5 条失败原因。
+**Step 2：Agent 选书**
 
-### retry
+看候选列表（stderr 输出的 Top 5），判断哪本是正确的书：
+- 书名是否精确匹配（不是"含有这几个字"，而是"就是这本书"）
+- 作者是否一致
+- 格式优先 epub > pdf
+- 如果没有合适候选 → 标记失败，写入 pipeline.md，处理下一本
 
-将"失败/跳过"区的所有条目重置为"待下载"，以便重试。
+如果脚本自动选的第一名就是正确的，直接用其输出路径；
+如果选错了，用 `--url` 重新下载正确的那本：
+```bash
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --url "https://z-lib.fm/book/xxx"
+```
 
-用 Claude 执行：
-1. 读取 pipeline.md
-2. 将所有 `- [!]` 行改为 `- [ ]`
-3. 将这些行从"失败/跳过"区移到"待下载"区
-4. 保存文件
+**Step 3：提炼**
+```bash
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/distill.ts \
+  --file /path/to/book.epub \
+  --output /tmp/distill-书名.md
+```
+
+**Step 4：Agent 验证提炼结果**
+
+读取 `/tmp/distill-书名.md` 前 200 字：
+- 确认书名、作者正确
+- 内容长度合理（>500字）
+- 如果内容明显不对（解析失败/字符数极少）→ 标记失败，删除临时文件
+
+**Step 5：Agent 推断分类**
+
+```bash
+ls ~/Notes/ai-reading/books/  # 看现有分类
+```
+
+结合书名、作者、提炼内容前 300 字，判断最合适的分类。可以新建分类目录。
+
+**Step 6：入库**
+```bash
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
+  --distill /tmp/distill-书名.md \
+  --category 分类名
+```
+
+**Step 7：更新 pipeline.md**
+
+直接编辑文件：
+- 成功：将条目状态改为 `[x]`，移到"已完成"区，附上输出路径
+- 失败：改为 `[!]`，移到"失败/跳过"区，附上原因
+
+#### 节奏控制
+
+- 每本书处理完后停顿 3 秒再下载下一本（z-library 限速）
+- 提炼期间可以同时启动下一本的下载
+- 遇到连续 3 次失败，暂停并报告给用户
+
+---
+
+### `/pipeline status` — 查看进度
+
+读取并展示 pipeline.md 各区段统计：
+- 各区段数量
+- 最近 5 条失败原因
+- 已完成列表（书名 + 分类）
+
+---
+
+### `/pipeline retry` — 重试失败条目
+
+读取 pipeline.md 的"失败/跳过"区，分析失败原因：
+- `z-library 无搜索结果` → 尝试换关键词重搜
+- `仅有扫描版` → 跳过（标注为永久跳过）
+- `cookie 失效` → 提示用户更新 cookie
+- 其他 → 重置为 `[ ]`，移回"待下载"区
+
+---
 
 ## pipeline.md 格式
 
@@ -72,36 +137,54 @@ cat $PIPELINE
 # BookDistill Pipeline
 
 ## 待下载
-- [ ] 刻意练习
-- [~] 深度工作 <!-- pid: 123, started: 2026-04-09T18:00:00Z -->
+- [ ] 刻意练习 <!-- author: 安德斯·艾利克森 -->
+- [ ] 深度工作 <!-- author: 卡尔·纽波特 -->
 
 ## 待提炼
-- [ ] 掌控习惯 <!-- file: /path/to/掌控习惯.epub -->
+- [ ] 掌控习惯 <!-- file: /path/to/file.epub, author: 詹姆斯·克利尔 -->
 
 ## 已完成
 - [x] 掌控习惯 <!-- output: 个人成长/詹姆斯·克利尔-掌控习惯.md -->
 
 ## 失败/跳过
-- [!] 定价圣经 <!-- reason: 仅有扫描版PDF(52MB) -->
+- [!] 定价圣经 <!-- reason: 仅有扫描版PDF(52MB)，永久跳过 -->
+- [!] Facebook效应 <!-- reason: z-library无搜索结果 -->
 ```
 
-状态符号：`[ ]` 待处理 | `[~]` 处理中 | `[x]` 完成 | `[!]` 失败
+---
 
-## 异常处理
+## 常见坑（踩过的）
 
-| 失败原因 | 处理方式 |
-|---------|---------|
-| z-library 无搜索结果 | 标记失败，跳过 |
-| 仅有扫描版 PDF | 标记失败，跳过 |
-| 下载超时 | 标记失败，可 retry |
-| cookie 失效 | 标记失败，更新 config.zlibrary.cookies 后 retry |
-| 解析失败（字符数=0）| 标记失败，可能是扫描版，跳过 |
-| AI API 错误 | 标记失败，可 retry |
+1. **搜索词太短会匹配到含关键词的无关书**
+   - "刻意练习" → 《易怒的男孩：刻意练习带孩子走出情绪困境》
+   - 解决：加作者名搜索，Agent 看候选列表确认是否正确
 
-## 注意
+2. **MiniMax 等推理模型返回 `<think>` 标签**
+   - distill.ts 提炼输出里会有，ingest.ts 已过滤
+   - 分类推断时 Agent 自己判断，不受影响
 
-- pipeline.md 在项目根目录，已加入 .gitignore
-- 下载 worker 串行运行（z-library 限速保护）
-- 提炼 worker 并发 2（AI API 并发限制）
-- 进程崩溃后重启会自动清理 `[~]` 状态，从断点继续
-- 分类由 AI 自动推断，可新建目录，不强制使用现有分类
+3. **大 PDF（>15MB）大概率是扫描版**
+   - 解析后字符数为 0 或极少 → 标记失败，不要入库
+
+4. **书名里有冒号/副标题**
+   - 入库文件名会截断副标题，frontmatter title 保留完整书名
+
+5. **pipeline.md 文件路径**
+   - 位置：`/Users/zcs/code2/BookDistill/pipeline.md`
+   - 已加入 .gitignore，不会被提交
+
+---
+
+## 辅助脚本路径
+
+```
+/Users/zcs/code2/BookDistill/src/scripts/
+├── download.ts           # 单本搜索+下载（Agent 主要用这个）
+├── distill.ts            # 单本提炼
+├── ingest.ts             # 单本入库
+├── pipeline-scan.ts      # 扫描延伸阅读（可选）
+└── pipeline-run.ts       # 全自动调度器（不推荐，选书不准确）
+```
+
+**推荐**：Agent 直接调用 `download.ts`、`distill.ts`、`ingest.ts`，
+逐本处理，每步验证。
