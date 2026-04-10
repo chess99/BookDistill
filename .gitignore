@@ -35,3 +35,7 @@ cli/config.json
 
 # Skill package (build artifact)
 *.skill
+
+# Pipeline state file (local state, not for version control)
+pipeline.md
+pipeline.md.tmp.*
