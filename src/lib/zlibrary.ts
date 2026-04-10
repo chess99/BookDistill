@@ -132,8 +132,10 @@ export async function searchZlib(
         if (!href) return;
         const bookUrl = href.startsWith('http') ? href : `${baseUrl}${href}`;
 
-        // 标题：从 href 路径提取，或从 shadow DOM / 子元素取
-        const titleFromHref = href.split('/').pop()?.replace(/\.html$/, '').replace(/-/g, ' ') || '';
+        // 标题：从 href 路径提取并 URL 解码
+        const titleFromHref = decodeURIComponent(
+          href.split('/').pop()?.replace(/\.html$/, '').replace(/-/g, ' ') || ''
+        );
 
         results.push({
           title: titleFromHref,
@@ -212,14 +214,25 @@ export function selectBestCandidate(
     let score = 0;
     const reasons: string[] = [];
 
-    // 标题相关性分（最多 30 分）
+    // 标题相关性分
+    // 查询词中取前2个词（通常是书名核心词）作为必须匹配词
+    // 如果标题完全不包含任何核心词，大幅扣分（套装/合集书问题）
     if (queryKeywords.length > 0) {
       const titleLower = c.title.toLowerCase();
-      const matchCount = queryKeywords.filter(kw => titleLower.includes(kw)).length;
-      if (matchCount > 0) {
-        const relScore = Math.min(30, Math.round((matchCount / queryKeywords.length) * 30));
+      // 只取前2个词作为"核心书名词"（跳过单字词）
+      const coreKeywords = queryKeywords.filter(w => w.length >= 2).slice(0, 2);
+      const coreMatchCount = coreKeywords.filter(kw => titleLower.includes(kw)).length;
+      const allMatchCount = queryKeywords.filter(kw => titleLower.includes(kw)).length;
+
+      if (coreMatchCount === 0) {
+        // 标题完全不包含核心词 → 强烈惩罚（套装书/无关书）
+        // 惩罚足够大，确保即使格式+年份满分也排不过正确的书
+        score -= 80;
+        reasons.push(`标题不含核心词[${coreKeywords.join(',')}] -80`);
+      } else {
+        const relScore = Math.min(30, Math.round((allMatchCount / queryKeywords.length) * 30));
         score += relScore;
-        reasons.push(`标题匹配 ${matchCount}/${queryKeywords.length} 关键词 +${relScore}`);
+        reasons.push(`标题匹配 ${allMatchCount}/${queryKeywords.length} 关键词 +${relScore}`);
       }
     }
 
