@@ -81,19 +81,17 @@ class DownloadError extends Error {
 
 /** 从 stderr 输出中提取失败原因 */
 function extractFailReason(errorMsg: string): string {
-  if (errorMsg.includes('QUOTA_EXCEEDED')) return 'QUOTA_EXCEEDED: 今日下载额度已用完，明日重试';
   if (errorMsg.includes('No results found')) return 'z-library 无搜索结果';
-  if (errorMsg.includes('Download timeout') || errorMsg.includes('timeout')) return '下载超时';
-  if (errorMsg.includes('cookies')) return 'cookie 失效，请更新 config.zlibrary.cookies';
+  if (errorMsg.includes('Download timeout') || errorMsg.includes('timeout')) return '下载超时（可能是额度用完或网络问题）';
+  if (errorMsg.includes('cookies') || errorMsg.includes('cf_clearance')) return 'cookie 失效，请更新 config.zlibrary.cookies';
   if (errorMsg.includes('canceled')) return '下载被取消（mirror 问题）';
   // 截取前100字符作为原因
   return errorMsg.replace(/\n/g, ' ').slice(0, 100);
 }
 
-/** 检查是否是额度用完错误（需要停止整个 worker） */
-function isQuotaExceeded(errorMsg: string): boolean {
-  return errorMsg.includes('QUOTA_EXCEEDED');
-}
+/** 连续超时计数器（用于推断额度用完） */
+let consecutiveTimeouts = 0;
+const QUOTA_THRESHOLD = 3; // 连续N次超时则认为额度可能用完
 
 // ── 用 npx tsx 运行（更可靠）─────────────────────────────────────────────────
 
@@ -171,11 +169,19 @@ async function processOne(): Promise<boolean> {
     const reason = extractFailReason(errMsg);
     console.error(`[下载] ✗ ${title}: ${reason}`);
 
-    if (isQuotaExceeded(errMsg)) {
-      // 额度用完：重置当前条目为待处理（明天继续），停止 worker
-      updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'pending', meta);
-      console.error('[下载] 今日额度已用完，停止下载 worker。明日重新运行即可继续。');
-      return false; // 返回 false 让 worker 停止
+    // 连续超时检测：可能是额度用完
+    if (errMsg.includes('timeout')) {
+      consecutiveTimeouts++;
+      if (consecutiveTimeouts >= QUOTA_THRESHOLD) {
+        // 重置当前条目为待处理（明天继续），停止 worker
+        updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'pending', meta);
+        console.error(`[下载] 连续 ${consecutiveTimeouts} 次下载超时，可能是今日额度已用完。`);
+        console.error('[下载] 停止下载 worker。明日重新运行即可继续。');
+        console.error('[下载] 如果是 cookie 过期，请更新 config.zlibrary.cookies 后重试。');
+        return false; // 停止 worker
+      }
+    } else {
+      consecutiveTimeouts = 0; // 非超时错误，重置计数
     }
 
     moveItem(
