@@ -434,7 +434,18 @@ export async function downloadFromZlib(
         resolveDownload = resolve;
         rejectDownload = reject;
       });
-      timeoutId = setTimeout(() => rejectDownload(new Error('Download timeout')), timeout);
+      timeoutId = setTimeout(async () => {
+        // 超时前检查页面是否显示额度限制提示
+        try {
+          const currentUrl = p.url();
+          const bodyText = await p.evaluate(() => document.body?.innerText?.slice(0, 300) || '').catch(() => '');
+          if (bodyText.includes('Daily limit') || bodyText.includes('daily limit') || currentUrl.includes('limit')) {
+            rejectDownload(new Error('QUOTA_EXCEEDED: Z-Library daily download limit reached. Try again tomorrow.'));
+            return;
+          }
+        } catch { /* ignore */ }
+        rejectDownload(new Error('Download timeout'));
+      }, timeout);
       p.on('download', async (download) => {
         if (downloadHandled) return;  // Skip if already handled by dl URL path
         downloadHandled = true;
@@ -463,6 +474,28 @@ export async function downloadFromZlib(
     if (isDlUrl) {
       // 直接下载 URL：用 waitForEvent('download') + 不等待页面加载的 goto
       console.error(`Direct download URL detected, navigating to ${url}...`);
+
+      // 先检查是否会跳转到额度限制页（不触发 download 事件）
+      // 用短超时快速检测，避免等待完整的 download timeout
+      let quotaReached = false;
+      const quickPage = await context.newPage();
+      try {
+        await quickPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
+        const title = await quickPage.title().catch(() => '');
+        const bodyText = await quickPage.evaluate(() => document.body?.innerText?.slice(0, 200) || '').catch(() => '');
+        if (title.includes('Daily limit') || bodyText.includes('Daily limit') || bodyText.includes('daily limit')) {
+          quotaReached = true;
+        }
+      } catch {
+        // 如果快速检测超时，继续正常下载流程
+      } finally {
+        await quickPage.close().catch(() => {});
+      }
+
+      if (quotaReached) {
+        throw new Error('QUOTA_EXCEEDED: Z-Library daily download limit reached. Try again tomorrow.');
+      }
+
       const [download] = await Promise.all([
         page.waitForEvent('download', { timeout }),
         page.goto(url, { waitUntil: 'commit', timeout }).catch(() => {/* expected: "Download is starting" */}),
