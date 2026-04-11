@@ -39,3 +39,6 @@ cli/config.json
 # Pipeline state file (local state, not for version control)
 pipeline.md
 pipeline.md.tmp.*
+
+# Raw book files (original materials, not for version control)
+raw-books/
