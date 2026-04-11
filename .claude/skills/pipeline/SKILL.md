@@ -22,27 +22,50 @@ description: |
 
 ### `/pipeline scan` — 扫描未入库书目
 
+**整体思路**：脚本负责机械提取文本，Agent 负责理解语义（识别作者、判断重复）。纯正则匹配无法处理"《社会共通资本》是宇泽弘文本人的另一部著作"这类语义关系。
+
 **Agent 执行步骤：**
 
-1. 扫描 `~/Notes/ai-reading/books/**/*.md` 中所有"延伸阅读"章节，提取 `《书名》（作者）` 格式的条目
-2. 对比已入库书单（扫描 books 目录文件名）
-3. 对比 pipeline.md 中已有条目
-4. 将新书目写入 pipeline.md 的"待下载"区，格式：
-   ```
-   - [ ] 书名 <!-- author: 作者名 -->
-   ```
-5. **Agent 语义去重**：读取全库所有书名，与待下载列表逐一比对
-   ```bash
-   find ~/Notes/ai-reading/books -name "*.md" | xargs grep -h "^title:" | sed 's/title: //' | sort
-   ```
-   判断标准：
-   - 完全相同 → 直接移除
-   - 同书异名（中英文、副标题差异、译名不同）→ 移除，加 `[!]` 注释说明
-   - 同作者同主题但不同书 → 保留，加注释提醒
-6. 打印最终新增书目供用户确认
-
-**辅助脚本（可选）：**
+**Step 1：脚本提取候选书单**
 ```bash
+# 提取所有延伸阅读中的书名（带括号作者格式）
+find ~/Notes/ai-reading/books -name "*.md" | while read f; do
+  awk '/延伸阅读/{found=1} found{print}' "$f"
+done | grep -oh '《[^》]\{2,40\}》' | sed 's/[《》]//g' | sort -u
+```
+
+**Step 2：Agent 补全作者**
+
+对每本候选书，Agent 读取该书所在的延伸阅读原文片段，判断作者：
+```bash
+find ~/Notes/ai-reading/books -name "*.md" | xargs grep -l "延伸阅读" | \
+  xargs grep -A3 "《书名》"
+```
+- 括号格式 `《书名》（作者）` → 直接提取
+- 描述格式 `《书名》作者XXX所著` → Agent 理解提取
+- 无作者信息 → Agent 凭知识补全（大多数经典书作者已知）
+
+**Step 3：Agent 语义去重**
+
+读取全库所有书名，与候选列表逐一比对：
+```bash
+find ~/Notes/ai-reading/books -name "*.md" | xargs grep -h "^title:" | sed 's/title: //' | sort
+```
+判断标准（**必须用语义理解，不能用 find 字符串匹配**）：
+- 完全相同 → 移除
+- 同书异名（中英文、副标题差异、译名不同）→ 移除并说明（如"Zero to One"="从零到一"）
+- 同作者另一本书 → 保留，加注释提醒
+
+**Step 4：写入 pipeline.md**
+```
+- [ ] 书名 <!-- author: 作者名 -->
+```
+
+**Step 5：打印新增书目供用户确认**
+
+**辅助脚本（参考，不推荐直接用）：**
+```bash
+# 只能做简单正则提取，无法补全作者或语义去重
 npx tsx /Users/zcs/code2/BookDistill/src/scripts/pipeline-scan.ts
 ```
 
