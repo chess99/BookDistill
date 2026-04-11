@@ -31,7 +31,15 @@ description: |
    ```
    - [ ] 书名 <!-- author: 作者名 -->
    ```
-5. 打印新增书目供用户确认
+5. **Agent 语义去重**：读取全库所有书名，与待下载列表逐一比对
+   ```bash
+   find ~/Notes/ai-reading/books -name "*.md" | xargs grep -h "^title:" | sed 's/title: //' | sort
+   ```
+   判断标准：
+   - 完全相同 → 直接移除
+   - 同书异名（中英文、副标题差异、译名不同）→ 移除，加 `[!]` 注释说明
+   - 同作者同主题但不同书 → 保留，加注释提醒
+6. 打印最终新增书目供用户确认
 
 **辅助脚本（可选）：**
 ```bash
@@ -214,9 +222,15 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
    - 解决：Step 4 Agent 审核时逐项检查修正
 
 5. **同书异名重复入库**
-   - "我们为什么睡觉" vs "我们为什么要睡觉"（同一本书）
+   - "我们为什么睡觉" vs "我们为什么要睡觉"（同一本书，书名微差）
    - "Zero to One" vs "从零到一"（中英文版）
-   - 解决：每次 scan 后 Agent 用 `find ~/Notes/ai-reading/books -name "*书名*"` 检查是否已有相似书名
+   - `find` 无法解决：字面不同的书名 find 匹配不到
+   - 解决：scan 完成后，Agent 读取全库所有书名，用语义理解逐一比对待下载列表
+     ```bash
+     # 提取全库书名
+     find ~/Notes/ai-reading/books -name "*.md" | xargs grep -h "^title:" | sed 's/title: //'
+     ```
+     然后 Agent 判断：完全相同 / 同书异名（跳过） / 相关但不同（保留）
 
 6. **搜索结果 title 字段是 URL 编码**（已修复）
    - `selectBestCandidate` 里的标题匹配之前对 URL 编码字符串做 includes，永远匹配不到
