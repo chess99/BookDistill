@@ -95,8 +95,27 @@ async function main() {
   const { fields, body } = parseFrontmatter(distillContent);
 
   // 确定 title 和 author（优先命令行参数，其次 frontmatter）
-  const title = titleArg || fields.title;
-  const author = authorArg || fields.author;
+  const rawTitle = titleArg || fields.title;
+  const rawAuthor = authorArg || fields.author;
+
+  // 自动规范化 title：去掉括号内的营销文字
+  const title = rawTitle
+    ? rawTitle
+        // 去掉含宣传词的括号内容
+        .replace(/[（(][^）)]*(?:已被|万人|验证|倾囊|博士|创始人|畅销|获奖|套装)[^）)]*[）)]/g, '')
+        .trim()
+    : rawTitle;
+
+  // 自动规范化 author：去掉国籍前缀、著译后缀
+  const author = rawAuthor
+    ? rawAuthor
+        .replace(/^\[.{1,4}\]/, '')   // [美]、[英] 等
+        .replace(/^[（(].{1,4}[）)]/, '') // （美）等
+        .replace(/[;；,，]\s*[^;；,，]+[译]$/, '') // 译者
+        .replace(/\s+[著译]$/, '')     // 著/译后缀
+        .replace(/\u2022/g, '·')       // • → ·
+        .trim()
+    : rawAuthor;
 
   if (!title) {
     console.error('Error: Cannot determine title. Use --title or ensure frontmatter has title field.');

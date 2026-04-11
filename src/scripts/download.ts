@@ -36,6 +36,7 @@ const getArg = (flag: string) => {
 const query = getArg('--query');
 const url = getArg('--url');
 const langArg = getArg('--lang');
+const baseUrlArg = getArg('--base-url');
 
 if (!query && !url) {
   console.error('Usage: download.ts --query "书名" | --url "https://z-lib.fm/book/xxx"');
@@ -66,7 +67,7 @@ async function main() {
     process.stderr.write(`Searching z-library for: "${query}"...\n`);
     const candidates = await searchZlib(query, {
       ...zlibOptions,
-      baseUrl: ZLIB_DEFAULT_BASE,
+      baseUrl: baseUrlArg || ZLIB_DEFAULT_BASE,
     });
 
     if (candidates.length === 0) {

@@ -80,12 +80,24 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/distill.ts \
   --output /tmp/distill-书名.md
 ```
 
-**Step 4：Agent 验证提炼结果**
+**Step 4：Agent 审核 frontmatter**
 
-读取 `/tmp/distill-书名.md` 前 200 字：
-- 确认书名、作者正确
-- 内容长度合理（>500字）
-- 如果内容明显不对（解析失败/字符数极少）→ 标记失败，删除临时文件
+读取 `/tmp/distill-书名.md` 前 20 行，逐项检查并修正：
+
+| 检查项 | 问题特征 | 修正方式 |
+|--------|---------|---------|
+| title | 含括号营销文字（>15字的宣传语） | 去掉括号内容，只保留书名 |
+| title | 含超长副标题（冒号后>20字） | 保留主标题，去掉副标题 |
+| author | 含 `[美]`、`（英）`、`著`、`译` 等 | 只保留人名，去掉前后缀 |
+| author | 含英文名（括号内英文） | 去掉英文名括号部分 |
+| tags | 为空 `[]` | 根据书名/内容推断 2-4 个标签 |
+| slug | 超过 40 字符 | 截断到核心书名拼音（≤20字符） |
+
+同时检查：
+- 内容长度是否合理（>500字）
+- 是否与已入库书籍重复（用 `find ~/Notes/ai-reading/books -name "*书名*"` 检查）
+
+发现问题直接修改 `/tmp/distill-书名.md` 再入库，不要跳过。
 
 **Step 5：Agent 推断分类**
 
@@ -194,7 +206,19 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
    - "联想风云 凌志军" → 全是《小米创业思考》（因为雷军写了"联想"相关内容）
    - 解决：标记失败，跳过；或尝试英文书名搜索
 
-4. **搜索结果 title 字段是 URL 编码**（已修复）
+4. **AI 提炼时 title/author 不规范**（已在 ingest.ts 加防御，但 Agent 仍需审核）
+   - title 含营销括号："福格行为模型（不较劲...已被120000人验证...）"
+   - author 含国籍前缀："[美]纳西姆·尼古拉斯·塔勒布"、"(美)卡尔·纽波特 著"
+   - slug 过长：每个字都拼音导致超过40字符
+   - tags 为空：AI 没有推断标签
+   - 解决：Step 4 Agent 审核时逐项检查修正
+
+5. **同书异名重复入库**
+   - "我们为什么睡觉" vs "我们为什么要睡觉"（同一本书）
+   - "Zero to One" vs "从零到一"（中英文版）
+   - 解决：每次 scan 后 Agent 用 `find ~/Notes/ai-reading/books -name "*书名*"` 检查是否已有相似书名
+
+6. **搜索结果 title 字段是 URL 编码**（已修复）
    - `selectBestCandidate` 里的标题匹配之前对 URL 编码字符串做 includes，永远匹配不到
    - 已在 `zlibrary.ts` 中用 `decodeURIComponent` 修复
    - 修复后套装书/无关书会被 -80 惩罚，正确的书排到第一

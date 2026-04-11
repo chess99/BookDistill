@@ -117,7 +117,9 @@ export async function searchZlib(
 
     const page = await context.newPage();
     console.error(`Searching z-library: ${searchUrl}`);
-    await page.goto(searchUrl, { waitUntil: 'networkidle', timeout });
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout });
+    // Wait a bit for JS-rendered book cards to appear
+    await page.waitForTimeout(3000);
 
     // 抓取搜索结果列表（z-library 使用 <z-bookcard> 自定义元素，数据在 attributes 中）
     const candidates = await page.evaluate((baseUrl: string) => {
@@ -424,6 +426,8 @@ export async function downloadFromZlib(
     let rejectDownload!: (err: Error) => void;
     let downloadPromise: Promise<string>;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    // Guard against double-handling when both page.on('download') and waitForEvent fire
+    let downloadHandled = false;
 
     const bindDownloadHandler = (p: Page) => {
       downloadPromise = new Promise<string>((resolve, reject) => {
@@ -432,6 +436,8 @@ export async function downloadFromZlib(
       });
       timeoutId = setTimeout(() => rejectDownload(new Error('Download timeout')), timeout);
       p.on('download', async (download) => {
+        if (downloadHandled) return;  // Skip if already handled by dl URL path
+        downloadHandled = true;
         clearTimeout(timeoutId);
         try {
           const suggestedName = download.suggestedFilename();
@@ -478,7 +484,8 @@ export async function downloadFromZlib(
       bookInfo = { title: path.basename(fileName, path.extname(fileName)), format: ext };
     } else {
       // 书籍详情页：先导航，再找下载按钮
-      bindDownloadHandler(page);
+      // 注意：bindDownloadHandler 在页面加载后、点击下载按钮前才调用，
+      // 避免300秒 timeout 在慢速页面加载期间被消耗。
 
       console.error(`Navigating to ${url}...`);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
@@ -507,6 +514,9 @@ export async function downloadFromZlib(
       bookInfo = await extractBookInfo(page);
       console.error(`Found book: ${bookInfo.title} by ${bookInfo.author || 'Unknown'}`);
 
+      // 页面加载完毕后，再绑定下载处理器（此时才开始计时，避免慢速加载吃掉 timeout）
+      bindDownloadHandler(page);
+
       // 监听 context 上新页面（popup）的 download 事件
       // z-library 的 /dl/ 链接可能带有 target="_blank"，会在新 page 触发 download
       context.on('page', (newPage) => {
@@ -532,14 +542,12 @@ export async function downloadFromZlib(
         });
       });
 
-      // 查找下载按钮
+      // 查找下载按钮（优先 /dl/ 链接，避免误触发 /users/downloads 等导航链接）
       const downloadSelectors = [
-        'a[href*="download"]',
+        'a[href*="/dl/"]',
         'button:has-text("Download")',
         '.download-link',
         'a.btn-download',
-        '[class*="download"]',
-        'a[href*="/dl/"]',
       ];
 
       let downloadClicked = false;
@@ -553,6 +561,7 @@ export async function downloadFromZlib(
               const dlUrl = new URL(href, `https://${domain}`).toString();
               console.error(`Navigating directly to dl URL: ${dlUrl}`);
               // 重新绑定 download handler，使用 waitForEvent 更可靠
+              downloadHandled = true;  // Prevent old page.on('download') handler from firing
               clearTimeout(timeoutId);
               const [dl] = await Promise.all([
                 page.waitForEvent('download', { timeout }),
@@ -577,7 +586,8 @@ export async function downloadFromZlib(
               break;
             }
           }
-        } catch {
+        } catch (e: any) {
+          console.error(`Selector ${selector} failed: ${e?.message || e}`);
           // Continue to next selector
         }
       }
@@ -591,6 +601,7 @@ export async function downloadFromZlib(
           if (href && href.startsWith('/dl/')) {
             const dlUrl = new URL(href, `https://${domain}`).toString();
             console.error(`Found dl link, navigating directly: ${dlUrl}`);
+            downloadHandled = true;  // Prevent old page.on('download') handler from firing
             clearTimeout(timeoutId);
             const [dl] = await Promise.all([
               page.waitForEvent('download', { timeout }),
