@@ -81,12 +81,18 @@ class DownloadError extends Error {
 
 /** 从 stderr 输出中提取失败原因 */
 function extractFailReason(errorMsg: string): string {
+  if (errorMsg.includes('QUOTA_EXCEEDED')) return 'QUOTA_EXCEEDED: 今日下载额度已用完，明日重试';
   if (errorMsg.includes('No results found')) return 'z-library 无搜索结果';
   if (errorMsg.includes('Download timeout') || errorMsg.includes('timeout')) return '下载超时';
   if (errorMsg.includes('cookies')) return 'cookie 失效，请更新 config.zlibrary.cookies';
   if (errorMsg.includes('canceled')) return '下载被取消（mirror 问题）';
   // 截取前100字符作为原因
   return errorMsg.replace(/\n/g, ' ').slice(0, 100);
+}
+
+/** 检查是否是额度用完错误（需要停止整个 worker） */
+function isQuotaExceeded(errorMsg: string): boolean {
+  return errorMsg.includes('QUOTA_EXCEEDED');
 }
 
 // ── 用 npx tsx 运行（更可靠）─────────────────────────────────────────────────
@@ -161,8 +167,17 @@ async function processOne(): Promise<boolean> {
     );
     return true;
   } catch (err: any) {
-    const reason = extractFailReason(err.message || '');
+    const errMsg = err.message || '';
+    const reason = extractFailReason(errMsg);
     console.error(`[下载] ✗ ${title}: ${reason}`);
+
+    if (isQuotaExceeded(errMsg)) {
+      // 额度用完：重置当前条目为待处理（明天继续），停止 worker
+      updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'pending', meta);
+      console.error('[下载] 今日额度已用完，停止下载 worker。明日重新运行即可继续。');
+      return false; // 返回 false 让 worker 停止
+    }
+
     moveItem(
       pipelinePath,
       title,

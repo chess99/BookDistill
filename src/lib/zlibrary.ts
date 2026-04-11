@@ -510,6 +510,15 @@ export async function downloadFromZlib(
         );
       }
 
+      // 检查是否达到每日下载额度限制
+      const quotaExceeded = await page.evaluate(() => {
+        const bodyText = document.body?.innerText || '';
+        return /daily.{0,20}limit|download.{0,20}limit|quota.{0,20}exceeded|达到.{0,10}限制|每日.{0,10}限额/i.test(bodyText);
+      });
+      if (quotaExceeded) {
+        throw new Error('QUOTA_EXCEEDED: Z-Library daily download limit reached. Try again tomorrow.');
+      }
+
       // 提取书籍信息
       bookInfo = await extractBookInfo(page);
       console.error(`Found book: ${bookInfo.title} by ${bookInfo.author || 'Unknown'}`);
