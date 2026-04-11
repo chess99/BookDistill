@@ -222,10 +222,10 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
    - 解决：Step 4 Agent 审核时逐项检查修正
 
 5. **z-library 每日下载额度（免费账号 10 本/天）**
-   - 额度用完时的行为尚未精确观察（需要实际触发才知道页面变化）
-   - 当前处理：连续 3 次下载超时则停止 worker，重置条目为待下载，明天继续
-   - `cf_clearance` cookie 过期（通常几小时到几天）会导致搜索失败，需要重新从浏览器复制 cookie
-   - 两种情况的表现相似（都是超时），都通过"连续超时停止"策略处理
+   - 额度用完时：下载按钮仍显示，`/dl/` 链接存在，但 navigate 过去跳转到 "Daily limit reached" 提示页，不触发 download 事件
+   - 代码已检测：navigate 到 `/dl/` 后检查页面是否含 "Daily limit" 文字，若是则立即抛出 `QUOTA_EXCEEDED` 错误
+   - pipeline-download.ts 识别 `QUOTA_EXCEEDED` 后停止 worker，重置当前条目为待下载，明天继续
+   - `cf_clearance` cookie 过期（通常几小时到几天）会导致**搜索**失败（页面无法加载），需重新从浏览器复制 cookie
 
 6. **同书异名重复入库**
    - "我们为什么睡觉" vs "我们为什么要睡觉"（同一本书，书名微差）
