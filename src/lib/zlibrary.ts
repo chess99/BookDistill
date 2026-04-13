@@ -593,6 +593,22 @@ export async function downloadFromZlib(
             if (href && href.startsWith('/dl/')) {
               const dlUrl = new URL(href, `https://${domain}`).toString();
               console.error(`Navigating directly to dl URL: ${dlUrl}`);
+
+              // 先用快速检测页检查是否额度用完，避免等待300秒超时
+              const quickPage2 = await context.newPage();
+              try {
+                await quickPage2.goto(dlUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
+                const bodyText2 = await quickPage2.evaluate(() => document.body?.innerText?.slice(0, 200) || '').catch(() => '');
+                if (bodyText2.includes('Daily limit') || bodyText2.includes('daily limit')) {
+                  throw new Error('QUOTA_EXCEEDED: Z-Library daily download limit reached. Try again tomorrow.');
+                }
+              } catch (e: any) {
+                if (e.message?.includes('QUOTA_EXCEEDED')) throw e;
+                // 其他错误（如导航被 download 事件中断）忽略
+              } finally {
+                await quickPage2.close().catch(() => {});
+              }
+
               // 重新绑定 download handler，使用 waitForEvent 更可靠
               downloadHandled = true;  // Prevent old page.on('download') handler from firing
               clearTimeout(timeoutId);
