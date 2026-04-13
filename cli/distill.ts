@@ -48,6 +48,7 @@ import {
 import { parseEpub } from '../src/lib/parsers/epub';
 import { parseMarkdown } from '../src/lib/parsers/markdown';
 import { parsePdf } from '../src/lib/parsers/pdf';
+import { parseAzw3 } from '../src/lib/parsers/azw3';
 import { DEFAULTS, LANGUAGES, SYSTEM_INSTRUCTION_TEMPLATE } from '../src/constants';
 import { generateBookFilename, generateMarkdownWithFrontmatter } from '../src/lib/filename';
 import {
@@ -135,7 +136,7 @@ Usage:
   book-distill config --show               Print current config (keys masked)
 
 Options:
-  -i, --input <file|url>   Input file (.epub, .pdf, .md, .markdown) or z-library URL
+  -i, --input <file|url>   Input file (.epub, .pdf, .md, .markdown, .azw3, .mobi) or z-library URL
   -o, --output <file>      Output file ("-" for stdout)
   -l, --lang <lang>        Output language (default: ${config.defaults.language})
                            Available: ${langList}
@@ -187,8 +188,10 @@ async function parseFile(filePath: string) {
     case '.pdf':     return parsePdf(filePath);
     case '.md':
     case '.markdown': return parseMarkdown(filePath);
+    case '.azw3':
+    case '.mobi':    return parseAzw3(filePath);
     default:
-      throw new Error(`Unsupported format: ${ext}. Supported: .epub, .pdf, .md, .markdown`);
+      throw new Error(`Unsupported format: ${ext}. Supported: .epub, .pdf, .md, .markdown, .azw3, .mobi`);
   }
 }
 

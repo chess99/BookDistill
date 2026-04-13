@@ -4,6 +4,8 @@ export enum FileFormat {
   MARKDOWN = 'md',
   PDF = 'pdf',
   TXT = 'txt',
+  AZW3 = 'azw3',
+  MOBI = 'mobi',
 }
 
 // 解析结果
