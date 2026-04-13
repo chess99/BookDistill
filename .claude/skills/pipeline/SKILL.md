@@ -61,7 +61,14 @@ find ~/Notes/ai-reading/books -name "*.md" | xargs grep -h "^title:" | sed 's/ti
 - [ ] 书名 <!-- author: 作者名 -->
 ```
 
-**Step 5：打印新增书目供用户确认**
+**Step 5：核实作者名**
+
+**延伸阅读里的作者名不可信**（AI 提炼时可能幻觉）：
+- Agent 根据**自己的知识**判断每本书的作者，不依赖提炼内容里的作者名
+- 不确定的标注 `<!-- author: ? -->`，在 select 阶段搜索时再确认
+- 已知幻觉案例：利夫·布拉德肖（实为莉尔·朗兹，《如何让你爱的人爱上你》作者）
+
+**Step 6：打印新增书目供用户确认**
 
 **辅助脚本（参考，不推荐直接用）：**
 ```bash
@@ -71,40 +78,62 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/pipeline-scan.ts
 
 ---
 
-### `/pipeline run` — 批量处理（核心流程）
+### `/pipeline select` — 预选书目（无额度消耗）
 
-Agent 逐本处理，每本书走完整链路：**搜索 → Agent 选书 → 下载 → 提炼 → Agent 验分类 → 入库**。
+**前提**：pipeline.md 的"待下载"区有无 `dl_url` 的条目。
 
-#### 每本书的处理流程
+Agent 逐一为每本书找到正确的 z-library 书籍详情页 URL，写入 `dl_url` 字段。
+这一步**不触发下载**，只消耗搜索次数，无额度限制，可随时执行。
 
-**Step 1：搜索候选**
+**每本书的操作：**
 
-读取 pipeline.md 的"待下载"区，取第一条。构造搜索词：
-
-```
-搜索词 = 书名 + 作者名（如有）
+```bash
+# 只看候选列表，不触发下载
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --query "书名 副标题或作者名" 2>&1 | head -30
 ```
 
 如果书名简短（≤4字），**加上副标题**（如"反脆弱 如何从不确定性中获益"），避免匹配到蹭书名的套装书。
 
-```bash
-npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --query "书名 副标题或作者名" 2>&1
+判断候选是否正确：
+- ✅ 书名精确匹配目标书（不是"《目标书》作者的其他书"）
+- ✅ 作者一致
+- ❌ 套装/合集（书名含"套装N册"、"系列"）→ 跳过，找下一个候选
+- ❌ 无合适候选 → 标记失败
+
+选中后，从 stderr 输出的候选列表中提取书籍详情页 URL（格式 `https://z-lib.fm/book/xxx/yyy.html`），写入 pipeline.md：
+
+```markdown
+- [ ] 书名 <!-- author: 作者, dl_url: https://z-lib.fm/book/xxx/yyy.html -->
 ```
 
-**Step 2：Agent 验证选书**
+**注意**：`dl_url` 存书籍详情页 URL（`/book/xxx/yyy.html`），不是直接下载链接（`/dl/xxx`）。下载器内部会从详情页找 `/dl/` 链接，详情页 URL 更稳定。
 
-看 stderr 输出的 `Found book:` 行，判断是否正确：
-- ✅ 书名就是目标书（不是"《目标书》作者的其他书"）
-- ✅ 作者一致
-- ❌ 如果是套装/合集（书名含"套装N册"、"系列"）→ 用 `--url` 指定正确候选重新下载
-- ❌ 如果搜索结果全是无关书 → 标记失败
+---
 
-如果脚本自动选对了，直接用输出路径；选错了用 `--url` 重下：
+### `/pipeline run` — 批量处理（核心流程）
+
+**前提**：pipeline.md 的"待下载"区条目已有 `dl_url`（先跑 `/pipeline select`）。
+
+Agent 逐本处理，每本书走完整链路：**下载 → 提炼 → Agent 审核 → 入库**。
+
+#### 每本书的处理流程
+
+**Step 1：下载**
+
+```bash
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/pipeline-download.ts --once
+```
+
+脚本读取第一条有 `dl_url` 的待下载条目，直接下载，成功则移入"待提炼"。
+- 遇到 `QUOTA_EXCEEDED`：停止，保留 `dl_url`，明天继续
+- 遇到其他失败：标记失败，继续下一条
+
+也可直接调用：
 ```bash
 npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --url "https://z-lib.fm/book/xxx"
 ```
 
-**Step 3：提炼**
+**Step 2：提炼**
 ```bash
 npx tsx /Users/zcs/code2/BookDistill/src/scripts/distill.ts \
   --file /path/to/book.epub \
@@ -153,7 +182,6 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
 
 #### 节奏控制
 
-- 每本书处理完后停顿 3 秒再下载下一本（z-library 限速）
 - 提炼期间可以同时启动下一本的下载
 - 遇到连续 3 次失败，暂停并报告给用户
 

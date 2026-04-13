@@ -1,20 +1,20 @@
 #!/usr/bin/env npx tsx
 /**
- * pipeline-download.ts — 下载 worker
+ * pipeline-download.ts — 纯下载执行器
  *
- * 消费 pipeline.md 的"待下载"队列，逐一调用 download.ts，
- * 成功则移入"待提炼"，失败则移入"失败/跳过"。
+ * 消费 pipeline.md 的"待下载"队列中有 dl_url 的条目，
+ * 直接用 --url 下载，不做搜索。
+ * 没有 dl_url 的条目需先运行 /pipeline select 填入。
  *
  * 用法：
- *   npx tsx src/scripts/pipeline-download.ts           # 持续运行直到队列空
+ *   npx tsx src/scripts/pipeline-download.ts           # 持续运行直到队列空或遇到 QUOTA_EXCEEDED
  *   npx tsx src/scripts/pipeline-download.ts --once    # 只处理一条
  *   npx tsx src/scripts/pipeline-download.ts --pipeline /path/to/pipeline.md
  */
 
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { execFile, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import {
   DEFAULT_PIPELINE_PATH,
   initPipelineFile,
@@ -25,7 +25,6 @@ import {
   SECTIONS,
 } from '../lib/pipeline.js';
 
-const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
@@ -38,38 +37,11 @@ const getArg = (flag: string) => {
 
 const pipelinePath = getArg('--pipeline') || DEFAULT_PIPELINE_PATH;
 const once = args.includes('--once');
-const DELAY_MS = 3000; // z-library 限速间隔
 
-// ── 运行 download.ts ──────────────────────────────────────────────────────────
-
-const DOWNLOAD_SCRIPT = path.join(__dirname, 'download.js');
+// ── 运行 download.ts --url ────────────────────────────────────────────────────
 
 interface DownloadResult {
   filePath: string;
-}
-
-async function runDownload(title: string): Promise<DownloadResult> {
-  const { stdout, stderr } = await execFileAsync(
-    process.execPath,
-    ['--input-type=module', '--experimental-vm-modules',
-     DOWNLOAD_SCRIPT, '--query', title],
-    {
-      timeout: 180_000, // 3分钟超时
-      env: { ...process.env },
-    }
-  ).catch((err: any) => {
-    // execFile 失败时 err.stderr 包含错误信息
-    const stderr = err.stderr || '';
-    const stdout = err.stdout || '';
-    throw new DownloadError(stderr || err.message, stdout);
-  });
-
-  // stdout 最后一行是文件路径
-  const filePath = stdout.trim().split('\n').pop()?.trim() || '';
-  if (!filePath || !filePath.startsWith('/')) {
-    throw new DownloadError(`download.ts 未返回有效文件路径: ${stdout}`, stderr);
-  }
-  return { filePath };
 }
 
 class DownloadError extends Error {
@@ -79,28 +51,12 @@ class DownloadError extends Error {
   }
 }
 
-/** 从 stderr 输出中提取失败原因 */
-function extractFailReason(errorMsg: string): string {
-  if (errorMsg.includes('No results found')) return 'z-library 无搜索结果';
-  if (errorMsg.includes('Download timeout') || errorMsg.includes('timeout')) return '下载超时（可能是额度用完或网络问题）';
-  if (errorMsg.includes('cookies') || errorMsg.includes('cf_clearance')) return 'cookie 失效，请更新 config.zlibrary.cookies';
-  if (errorMsg.includes('canceled')) return '下载被取消（mirror 问题）';
-  // 截取前100字符作为原因
-  return errorMsg.replace(/\n/g, ' ').slice(0, 100);
-}
-
-/** 连续超时计数器（用于推断额度用完） */
-let consecutiveTimeouts = 0;
-const QUOTA_THRESHOLD = 3; // 连续N次超时则认为额度可能用完
-
-// ── 用 npx tsx 运行（更可靠）─────────────────────────────────────────────────
-
-async function runDownloadViaNpx(title: string): Promise<DownloadResult> {
+async function runDownloadByUrl(dlUrl: string): Promise<DownloadResult> {
   const scriptPath = path.join(__dirname, '../../src/scripts/download.ts');
 
   return new Promise((resolve, reject) => {
     const child = spawn(
-      'npx', ['tsx', scriptPath, '--query', title],
+      'npx', ['tsx', scriptPath, '--url', dlUrl],
       {
         timeout: 180_000,
         env: { ...process.env },
@@ -134,6 +90,16 @@ async function runDownloadViaNpx(title: string): Promise<DownloadResult> {
   });
 }
 
+/** 从错误信息中提取失败原因 */
+function extractFailReason(errorMsg: string): string {
+  if (errorMsg.includes('QUOTA_EXCEEDED') || errorMsg.includes('Daily limit')) return 'QUOTA_EXCEEDED';
+  if (errorMsg.includes('cookies') || errorMsg.includes('cf_clearance')) return 'cookie 失效，请更新 config.zlibrary.cookies';
+  if (errorMsg.includes('canceled')) return '下载被取消（mirror 问题）';
+  if (errorMsg.includes('timeout')) return '下载超时（网络问题）';
+  // 截取前100字符作为原因
+  return errorMsg.replace(/\n/g, ' ').slice(0, 100);
+}
+
 // ── 主循环 ────────────────────────────────────────────────────────────────────
 
 async function processOne(): Promise<boolean> {
@@ -141,9 +107,15 @@ async function processOne(): Promise<boolean> {
   if (!item) return false;
 
   const { title, meta } = item;
-  // 用"书名 作者"搜索，避免同名书混淆
-  const searchQuery = meta.author ? `${title} ${meta.author}` : title;
+
+  // 没有 dl_url 则停止（需要先运行 /pipeline select）
+  if (!meta.dl_url) {
+    console.error(`[下载] 队列中有无 dl_url 的条目（${title}），请先运行 /pipeline select 选书`);
+    return false;
+  }
+
   console.error(`\n[下载] ${title}${meta.author ? ` （${meta.author}）` : ''}`);
+  console.error(`[下载] URL: ${meta.dl_url}`);
 
   // 标记为处理中
   updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'in_progress', {
@@ -153,7 +125,7 @@ async function processOne(): Promise<boolean> {
   });
 
   try {
-    const { filePath } = await runDownloadViaNpx(searchQuery);
+    const { filePath } = await runDownloadByUrl(meta.dl_url);
     console.error(`[下载] ✓ ${title} → ${filePath}`);
     moveItem(
       pipelinePath,
@@ -169,19 +141,11 @@ async function processOne(): Promise<boolean> {
     const reason = extractFailReason(errMsg);
     console.error(`[下载] ✗ ${title}: ${reason}`);
 
-    // 连续超时检测：可能是额度用完
-    if (errMsg.includes('timeout')) {
-      consecutiveTimeouts++;
-      if (consecutiveTimeouts >= QUOTA_THRESHOLD) {
-        // 重置当前条目为待处理（明天继续），停止 worker
-        updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'pending', meta);
-        console.error(`[下载] 连续 ${consecutiveTimeouts} 次下载超时，可能是今日额度已用完。`);
-        console.error('[下载] 停止下载 worker。明日重新运行即可继续。');
-        console.error('[下载] 如果是 cookie 过期，请更新 config.zlibrary.cookies 后重试。');
-        return false; // 停止 worker
-      }
-    } else {
-      consecutiveTimeouts = 0; // 非超时错误，重置计数
+    // 额度用完：重置为待下载（保留 dl_url），停止 worker
+    if (reason === 'QUOTA_EXCEEDED') {
+      updateItem(pipelinePath, SECTIONS.PENDING_DOWNLOAD, title, 'pending', meta);
+      console.error('[下载] 今日下载额度已用完，停止 worker。明日重新运行即可继续。');
+      return false;
     }
 
     moveItem(
@@ -190,7 +154,7 @@ async function processOne(): Promise<boolean> {
       SECTIONS.PENDING_DOWNLOAD,
       SECTIONS.FAILED,
       'failed',
-      { reason }
+      { reason, dl_url: meta.dl_url }
     );
     return true; // 继续处理下一条
   }
@@ -208,21 +172,19 @@ async function main() {
   if (once) {
     const processed = await processOne();
     if (!processed) {
-      console.error('[下载] 待下载队列为空');
+      console.error('[下载] 无可处理条目（队列空或缺少 dl_url）');
     }
     return;
   }
 
   // 持续运行
-  console.error('[下载] 启动下载 worker，持续监控待下载队列...');
+  console.error('[下载] 启动下载 worker，处理有 dl_url 的待下载条目...');
   while (true) {
     const processed = await processOne();
     if (!processed) {
-      console.error('[下载] 待下载队列为空，退出');
+      console.error('[下载] 停止（队列空、缺少 dl_url、或额度用完）');
       break;
     }
-    // 限速：每条下载后等待
-    await new Promise(r => setTimeout(r, DELAY_MS));
   }
 }
 

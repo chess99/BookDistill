@@ -37,9 +37,10 @@ const query = getArg('--query');
 const url = getArg('--url');
 const langArg = getArg('--lang');
 const baseUrlArg = getArg('--base-url');
+const searchOnly = args.includes('--search-only'); // 只搜索，不下载（用于 /pipeline select）
 
 if (!query && !url) {
-  console.error('Usage: download.ts --query "书名" | --url "https://z-lib.fm/book/xxx"');
+  console.error('Usage: download.ts --query "书名" | --url "https://z-lib.fm/book/xxx" [--search-only]');
   process.exit(1);
 }
 
@@ -87,6 +88,11 @@ async function main() {
     });
     process.stderr.write(`\nSelected: ${best.format.toUpperCase()} ${best.fileSize} (${best.year})\n`);
     process.stderr.write(`URL: ${best.bookUrl}\n\n`);
+
+    if (searchOnly) {
+      // 只搜索，不下载（供 /pipeline select 使用）
+      process.exit(0);
+    }
 
     downloadUrl = best.bookUrl;
   }
