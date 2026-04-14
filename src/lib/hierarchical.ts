@@ -98,6 +98,31 @@ export async function distillLargeText(
     `Hierarchical distillation: ${chunks.length} chunks × ~${Math.round(chunks[0].length / 1000)}k chars each\n`
   );
 
+  // ── 带重试的 API 调用 ──────────────────────────────────────────────────────
+  async function callWithRetry(
+    text: string,
+    sysPrompt: string,
+    label: string,
+    maxRetries = 3
+  ): Promise<string> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await generateFn(text, title, author, sysPrompt);
+      } catch (e: any) {
+        const msg = e?.message || '';
+        const isRetryable = msg.includes('529') || msg.includes('overload') || msg.includes('overloaded') || msg.includes('负载');
+        if (isRetryable && attempt < maxRetries) {
+          const waitMs = attempt * 15000; // 15s, 30s
+          process.stderr.write(`  ${label} failed (attempt ${attempt}/${maxRetries}), retrying in ${waitMs / 1000}s...\n`);
+          await new Promise(r => setTimeout(r, waitMs));
+        } else {
+          throw e;
+        }
+      }
+    }
+    throw new Error('unreachable');
+  }
+
   // ── Pass 1: Per-chunk intermediate summaries ──────────────────────────────
   const intermediates: string[] = [];
 
@@ -106,7 +131,7 @@ export async function distillLargeText(
     process.stderr.write(`  Processing chunk ${i + 1}/${chunks.length}...\n`);
 
     const chunkPrompt = buildChunkSystemPrompt(title, i + 1, chunks.length, language);
-    const summary = await generateFn(chunks[i], title, author, chunkPrompt);
+    const summary = await callWithRetry(chunks[i], chunkPrompt, `chunk ${i + 1}/${chunks.length}`);
     intermediates.push(summary);
   }
 
@@ -118,7 +143,7 @@ export async function distillLargeText(
     .join('\n\n---\n\n');
 
   const mergePrompt = buildMergeSystemPrompt(title, chunks.length, language);
-  const finalSummary = await generateFn(mergedInput, title, author, mergePrompt);
+  const finalSummary = await callWithRetry(mergedInput, mergePrompt, 'merge pass');
 
   return finalSummary;
 }

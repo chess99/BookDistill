@@ -159,11 +159,28 @@ async function main() {
     );
   } else {
     process.stderr.write('Distilling...\n');
-    rawContent = await callAI(
-      providerCfg.type, providerCfg.apiKey, providerCfg.baseUrl,
-      providerCfg.model, systemPrompt,
-      parsed.text, parsed.title, parsed.author || 'Unknown'
-    );
+    // 带重试（应对 API 过载 529）
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        rawContent = await callAI(
+          providerCfg.type, providerCfg.apiKey, providerCfg.baseUrl,
+          providerCfg.model, systemPrompt,
+          parsed.text, parsed.title, parsed.author || 'Unknown'
+        );
+        break;
+      } catch (e: any) {
+        const msg = e?.message || '';
+        const isRetryable = msg.includes('529') || msg.includes('overload') || msg.includes('负载');
+        if (isRetryable && attempt < maxRetries) {
+          const waitMs = attempt * 15000;
+          process.stderr.write(`Distill failed (attempt ${attempt}/${maxRetries}), retrying in ${waitMs / 1000}s...\n`);
+          await new Promise(r => setTimeout(r, waitMs));
+        } else {
+          throw e;
+        }
+      }
+    }
   }
 
   // 生成带 frontmatter 的最终内容
