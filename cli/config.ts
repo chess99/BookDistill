@@ -19,6 +19,8 @@ export type ProviderType = 'gemini' | 'openai' | 'anthropic' | 'openai_compatibl
 export interface ProviderConfig {
   apiKey: string;
   baseUrl?: string;
+  /** 该 provider 的默认 model，优先于 defaults.model */
+  model?: string;
   /** 'openai-completions' (default) | 'gemini' */
   api?: 'openai-completions' | 'gemini';
 }
@@ -149,13 +151,13 @@ export function resolveProvider(
   }
 ): ResolvedProvider {
   let providerName = opts.provider || config.defaults.provider;
-  let modelId = opts.model || config.defaults.model;
 
-  // Support "providerName/modelId" shorthand in --model
-  if (modelId.includes('/') && !modelId.startsWith('http')) {
-    const slash = modelId.indexOf('/');
-    providerName = modelId.slice(0, slash);
-    modelId = modelId.slice(slash + 1);
+  // Support "providerName/modelId" shorthand in --model (resolve provider first)
+  let cliModel = opts.model;
+  if (cliModel?.includes('/') && !cliModel.startsWith('http')) {
+    const slash = cliModel.indexOf('/');
+    providerName = cliModel.slice(0, slash);
+    cliModel = cliModel.slice(slash + 1);
   }
 
   const providerCfg = config.providers[providerName];
@@ -165,6 +167,9 @@ export function resolveProvider(
       `Run: book-distill config --help`
     );
   }
+
+  // model priority: CLI --model > providerCfg.model > defaults.model
+  let modelId = cliModel || providerCfg.model || config.defaults.model;
 
   // API key priority: CLI flag > config > env vars
   const apiKey =

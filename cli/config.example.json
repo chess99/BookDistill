@@ -2,30 +2,40 @@
   "providers": {
     "gemini": {
       "type": "gemini",
-      "apiKey": "YOUR_GEMINI_API_KEY"
+      "apiKey": "YOUR_GEMINI_API_KEY",
+      "model": "gemini-2.5-pro-preview"
     },
     "bailian": {
       "type": "openai_compatible",
       "apiKey": "sk-sp-YOUR_KEY",
-      "baseUrl": "https://coding.dashscope.aliyuncs.com"
+      "baseUrl": "https://coding.dashscope.aliyuncs.com",
+      "model": "qwen-plus"
+    },
+    "minimax": {
+      "type": "openai_compatible",
+      "apiKey": "YOUR_MINIMAX_KEY",
+      "baseUrl": "https://api.minimaxi.com/v1",
+      "model": "MiniMax-M2.7"
     },
     "openai": {
       "type": "openai",
-      "apiKey": "sk-YOUR_OPENAI_KEY"
+      "apiKey": "sk-YOUR_OPENAI_KEY",
+      "model": "gpt-4o-mini"
     },
     "anthropic": {
       "type": "anthropic",
-      "apiKey": "sk-ant-YOUR_KEY"
+      "apiKey": "sk-ant-YOUR_KEY",
+      "model": "claude-haiku-4-5-20251001"
     },
     "local": {
       "type": "openai_compatible",
       "apiKey": "ollama",
-      "baseUrl": "http://localhost:11434"
+      "baseUrl": "http://localhost:11434",
+      "model": "qwen2.5:7b"
     }
   },
   "defaults": {
     "provider": "bailian",
-    "model": "qwen3.5-plus",
     "language": "Chinese"
   },
   "github": {
