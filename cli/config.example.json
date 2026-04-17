@@ -45,7 +45,10 @@
     "path": "notes/books"
   },
   "zlibrary": {
-    "cookies": "name=value; name2=value2",
+    "accounts": [
+      "siteLanguage=en; remix_userkey=YOUR_KEY; remix_userid=YOUR_ID; bsrv=YOUR_BSRV",
+      "siteLanguage=en; remix_userkey=ACCOUNT2_KEY; remix_userid=ACCOUNT2_ID; bsrv=ACCOUNT2_BSRV"
+    ],
     "downloadDir": "~/Downloads"
   }
 }
