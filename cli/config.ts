@@ -31,8 +31,10 @@ export interface ModelShortcut {
 }
 
 export interface ZlibraryConfig {
-  /** Cookie 字符串，格式：name=value; name2=value2 */
+  /** Cookie 字符串，格式：name=value; name2=value2（当前激活账号） */
   cookies?: string;
+  /** 多账号 cookie 列表，QUOTA_EXCEEDED 时自动轮换 */
+  accounts?: string[];
   /** 下载超时（毫秒），默认 60000 */
   timeout?: number;
   /** HTTP 代理服务器，格式：http://host:port 或 http://user:pass@host:port */

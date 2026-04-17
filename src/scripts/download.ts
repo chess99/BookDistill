@@ -50,19 +50,28 @@ async function main() {
   const config = readConfig();
   const zlibCfg = config.zlibrary;
 
-  if (!zlibCfg?.cookies) {
-    console.error('Error: zlibrary.cookies not set in cli/config.json');
+  // 账号列表：accounts 数组优先，否则用 cookies 单账号
+  const accounts: string[] = zlibCfg?.accounts?.length
+    ? zlibCfg.accounts
+    : zlibCfg?.cookies
+      ? [zlibCfg.cookies]
+      : [];
+
+  if (accounts.length === 0) {
+    console.error('Error: zlibrary.cookies or zlibrary.accounts not set in cli/config.json');
     process.exit(1);
   }
 
-  const zlibOptions = {
-    cookies: zlibCfg.cookies,
-    timeout: zlibCfg.timeout,
-    proxy: zlibCfg.proxy,
-    downloadDir: zlibCfg.downloadDir,
+  const baseOptions = {
+    timeout: zlibCfg?.timeout,
+    proxy: zlibCfg?.proxy,
+    downloadDir: zlibCfg?.downloadDir,
   };
 
   let downloadUrl = url;
+
+  // 搜索阶段用第一个账号（搜索不消耗额度）
+  const zlibOptions = { ...baseOptions, cookies: accounts[0] };
 
   if (query && !downloadUrl) {
     process.stderr.write(`Searching z-library for: "${query}"...\n`);
@@ -90,7 +99,6 @@ async function main() {
     process.stderr.write(`URL: ${best.bookUrl}\n\n`);
 
     if (searchOnly) {
-      // 只搜索，不下载（供 /pipeline select 使用）
       process.exit(0);
     }
 
@@ -102,12 +110,28 @@ async function main() {
     process.exit(1);
   }
 
+  // 下载阶段：遇到 QUOTA_EXCEEDED 自动切换下一个账号
   process.stderr.write(`Downloading from: ${downloadUrl}\n`);
-  const result = await downloadFromZlib(downloadUrl, zlibOptions);
-
-  process.stderr.write(`Downloaded: ${result.fileName} → ${result.filePath}\n`);
-  // stdout: 文件路径（供 skills 捕获）
-  process.stdout.write(result.filePath + '\n');
+  let lastErr: Error | null = null;
+  for (let i = 0; i < accounts.length; i++) {
+    if (i > 0) {
+      process.stderr.write(`[账号${i}] QUOTA_EXCEEDED，切换到账号${i + 1}...\n`);
+    }
+    try {
+      const result = await downloadFromZlib(downloadUrl, { ...baseOptions, cookies: accounts[i] });
+      if (i > 0) {
+        process.stderr.write(`[账号${i + 1}] 下载成功\n`);
+      }
+      process.stderr.write(`Downloaded: ${result.fileName} → ${result.filePath}\n`);
+      process.stdout.write(result.filePath + '\n');
+      return;
+    } catch (err: any) {
+      lastErr = err;
+      if (!err.message?.includes('QUOTA_EXCEEDED')) throw err; // 非额度错误直接抛出
+    }
+  }
+  // 所有账号都超额
+  throw lastErr ?? new Error('All accounts quota exceeded');
 }
 
 main().catch(err => {
