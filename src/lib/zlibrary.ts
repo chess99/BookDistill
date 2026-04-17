@@ -637,6 +637,7 @@ export async function downloadFromZlib(
           }
         } catch (e: any) {
           console.error(`Selector ${selector} failed: ${e?.message || e}`);
+          if (e?.message?.includes('QUOTA_EXCEEDED')) throw e; // 不继续尝试其他 selector
           // Continue to next selector
         }
       }
