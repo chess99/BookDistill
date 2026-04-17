@@ -127,7 +127,7 @@ async function main() {
       return;
     } catch (err: any) {
       lastErr = err;
-      if (!err.message?.includes('QUOTA_EXCEEDED')) throw err; // 非额度错误直接抛出
+      if (!err.message?.includes('QUOTA_EXCEEDED')) throw err; // 非额度错误（含 COPYRIGHT_REMOVED）直接抛出
     }
   }
   // 所有账号都超额

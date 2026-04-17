@@ -93,10 +93,10 @@ async function runDownloadByUrl(dlUrl: string): Promise<DownloadResult> {
 /** 从错误信息中提取失败原因 */
 function extractFailReason(errorMsg: string): string {
   if (errorMsg.includes('QUOTA_EXCEEDED') || errorMsg.includes('Daily limit')) return 'QUOTA_EXCEEDED';
+  if (errorMsg.includes('COPYRIGHT_REMOVED')) return '版权投诉下架，z-library 无法下载';
   if (errorMsg.includes('cookies') || errorMsg.includes('cf_clearance')) return 'cookie 失效，请更新 config.zlibrary.cookies';
   if (errorMsg.includes('canceled')) return '下载被取消（mirror 问题）';
   if (errorMsg.includes('timeout')) return '下载超时（网络问题）';
-  // 截取前100字符作为原因
   return errorMsg.replace(/\n/g, ' ').slice(0, 100);
 }
 

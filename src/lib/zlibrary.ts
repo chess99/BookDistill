@@ -543,6 +543,16 @@ export async function downloadFromZlib(
         );
       }
 
+      // 检查是否被版权投诉下架
+      const copyrightNotice = await page.evaluate(() => {
+        const text = document.body?.innerText || '';
+        return text.includes("isn't available for download due to the complaint") ||
+               text.includes('copyright holder') && text.includes('available');
+      }).catch(() => false);
+      if (copyrightNotice) {
+        throw new Error('COPYRIGHT_REMOVED: This book was removed due to a copyright complaint and cannot be downloaded from z-library.');
+      }
+
       // 提取书籍信息
       bookInfo = await extractBookInfo(page);
       console.error(`Found book: ${bookInfo.title} by ${bookInfo.author || 'Unknown'}`);
