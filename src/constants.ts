@@ -1,5 +1,5 @@
 export const CONTEXT_WINDOW_CHAR_LIMIT = 3_500_000; // ~875k tokens
-export const HIERARCHICAL_THRESHOLD = 350_000;      // chars，超过此值使用分层提炼（MiniMax M2.7 context limit ~400k chars）
+export const HIERARCHICAL_THRESHOLD = 200_000;      // chars，超过此值使用分层提炼（MiniMax M2.7 实际 context limit ~250k chars）
 
 export const DEFAULTS = {
   LANGUAGE: 'Chinese',
