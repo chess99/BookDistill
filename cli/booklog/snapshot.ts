@@ -33,7 +33,6 @@ function walkDir(dir: string, root: string): string[] {
 
 export async function takeSnapshot(rootArg: string): Promise<void> {
   const root = path.resolve(rootArg);
-  const booklogDir = path.join(root, BOOKLOG_DIR);
   const snapshotsDir = path.join(root, SNAPSHOTS_DIR);
   const hashcachePath = path.join(root, HASHCACHE_FILE);
 
@@ -48,6 +47,14 @@ export async function takeSnapshot(rootArg: string): Promise<void> {
   let hashed = 0;
   let cached = 0;
 
+  // Pre-compute for progress display
+  const totalNew = allFiles.filter(abs => {
+    const rel = path.relative(root, abs);
+    const stat = fs.statSync(abs);
+    const entry = cache[rel];
+    return !(entry && entry.mtime === stat.mtimeMs && entry.size === stat.size);
+  }).length;
+
   for (const abs of allFiles) {
     const rel = path.relative(root, abs);
     const stat = fs.statSync(abs);
@@ -60,7 +67,7 @@ export async function takeSnapshot(rootArg: string): Promise<void> {
       hash = cacheEntry.hash;
       cached++;
     } else {
-      process.stdout.write(`\rhashing ${++hashed}/${allFiles.length - cached} new files...`);
+      process.stdout.write(`\rhashing ${++hashed}/${totalNew} new files...`);
       hash = hashFile(abs);
       cache[rel] = { mtime, size, hash };
     }
