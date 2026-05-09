@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Snapshot, DiffEntry } from './types.js';
+import { findRoot } from './util.js';
 
 function loadSnapshot(filePath: string): Snapshot {
   return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -35,15 +36,7 @@ function computeDiff(a: Snapshot, b: Snapshot): DiffEntry[] {
 }
 
 export async function diffSnapshots(s1Arg?: string, s2Arg?: string): Promise<void> {
-  // resolve root: walk up from cwd to find .booklog
-  let root = process.cwd();
-  while (!fs.existsSync(path.join(root, '.booklog')) && root !== '/') {
-    root = path.dirname(root);
-  }
-  if (!fs.existsSync(path.join(root, '.booklog'))) {
-    console.error('No .booklog directory found. Run: booklog snapshot <dir>');
-    process.exit(1);
-  }
+  const root = findRoot();
 
   const files = getSnapshotFiles(root);
   if (files.length < 2) {
@@ -72,19 +65,19 @@ export async function diffSnapshots(s1Arg?: string, s2Arg?: string): Promise<voi
   if (moved.length) {
     console.log(`Moved (${moved.length}):`);
     for (const d of moved) {
-      if (d.type === 'moved') console.log(`  ${d.from}\n    → ${d.to}`);
+      console.log(`  ${d.from}\n    → ${d.to}`);
     }
   }
   if (added.length) {
     console.log(`\nAdded (${added.length}):`);
     for (const d of added) {
-      if (d.type === 'added') console.log(`  + ${d.path}  [${d.hash}]`);
+      console.log(`  + ${d.path}  [${d.hash}]`);
     }
   }
   if (deleted.length) {
     console.log(`\nDeleted (${deleted.length}):`);
     for (const d of deleted) {
-      if (d.type === 'deleted') console.log(`  - ${d.path}  [${d.hash}]`);
+      console.log(`  - ${d.path}  [${d.hash}]`);
     }
   }
 }

@@ -15,20 +15,20 @@ type HashCache = Record<string, { mtime: number; size: number; hash: string }>;
 function hashFile(filePath: string): string | null {
   try {
     const buf = fs.readFileSync(filePath);
-    return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 16);
+    return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32);
   } catch (err: any) {
     process.stderr.write(`\nWARN: skipping ${filePath} (${err.code ?? err.message})\n`);
     return null;
   }
 }
 
-function walkDir(dir: string, root: string): string[] {
+function walkDir(dir: string): string[] {
   const results: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...walkDir(full, root));
+      results.push(...walkDir(full));
     } else if (BOOK_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
       results.push(full);
     }
@@ -47,22 +47,20 @@ export async function takeSnapshot(rootArg: string): Promise<void> {
     ? JSON.parse(fs.readFileSync(hashcachePath, 'utf-8'))
     : {};
 
-  const allFiles = walkDir(root, root);
+  const allFiles = walkDir(root);
   const records: FileRecord[] = [];
   let hashed = 0;
   let cached = 0;
 
-  // Pre-compute for progress display
-  const totalNew = allFiles.filter(abs => {
-    const rel = path.relative(root, abs);
-    const stat = fs.statSync(abs);
-    const entry = cache[rel];
-    return !(entry && entry.mtime === stat.mtimeMs && entry.size === stat.size);
-  }).length;
-
   for (const abs of allFiles) {
     const rel = path.relative(root, abs);
-    const stat = fs.statSync(abs);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(abs);
+    } catch {
+      process.stderr.write(`\nWARN: skipping ${abs} (stat failed)\n`);
+      continue;
+    }
     const mtime = stat.mtimeMs;
     const size = stat.size;
 
@@ -72,7 +70,7 @@ export async function takeSnapshot(rootArg: string): Promise<void> {
       hash = cacheEntry.hash;
       cached++;
     } else {
-      process.stdout.write(`\rhashing ${++hashed}/${totalNew} new files...`);
+      process.stdout.write(`\rhashing file ${++hashed}...`);
       const computed = hashFile(abs);
       if (computed === null) continue; // skip unreadable files
       hash = computed;
@@ -94,14 +92,6 @@ export async function takeSnapshot(rootArg: string): Promise<void> {
   console.log(`  ${records.length} files (${hashed} hashed, ${cached} from cache)`);
 
   // rebuild index after every snapshot
-  try {
-    const { rebuildIndex } = await import('./index.js');
-    await rebuildIndex(root);
-  } catch (err: any) {
-    if (err?.code === 'ERR_MODULE_NOT_FOUND' || err?.message?.includes('Cannot find module')) {
-      // index.ts not yet implemented — expected during Task 2
-    } else {
-      throw err;
-    }
-  }
+  const { rebuildIndex } = await import('./index.js');
+  await rebuildIndex(root);
 }

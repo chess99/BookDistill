@@ -1,18 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Index } from './types.js';
-
-function findRoot(): string {
-  let root = process.cwd();
-  while (!fs.existsSync(path.join(root, '.booklog')) && root !== '/') {
-    root = path.dirname(root);
-  }
-  if (!fs.existsSync(path.join(root, '.booklog'))) {
-    console.error('No .booklog directory found.');
-    process.exit(1);
-  }
-  return root;
-}
+import { findRoot } from './util.js';
 
 function loadIndex(root: string): Index {
   const indexPath = path.join(root, '.booklog', 'index.json');
