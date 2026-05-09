@@ -12,9 +12,14 @@ const HASHCACHE_FILE = '.booklog/hashcache.json';
 // hashcache: { [relPath]: { mtime: number, size: number, hash: string } }
 type HashCache = Record<string, { mtime: number; size: number; hash: string }>;
 
-function hashFile(filePath: string): string {
-  const buf = fs.readFileSync(filePath);
-  return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 16);
+function hashFile(filePath: string): string | null {
+  try {
+    const buf = fs.readFileSync(filePath);
+    return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 16);
+  } catch (err: any) {
+    process.stderr.write(`\nWARN: skipping ${filePath} (${err.code ?? err.message})\n`);
+    return null;
+  }
 }
 
 function walkDir(dir: string, root: string): string[] {
@@ -68,7 +73,9 @@ export async function takeSnapshot(rootArg: string): Promise<void> {
       cached++;
     } else {
       process.stdout.write(`\rhashing ${++hashed}/${totalNew} new files...`);
-      hash = hashFile(abs);
+      const computed = hashFile(abs);
+      if (computed === null) continue; // skip unreadable files
+      hash = computed;
       cache[rel] = { mtime, size, hash };
     }
 
