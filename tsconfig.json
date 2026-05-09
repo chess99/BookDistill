@@ -1,13 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "experimentalDecorators": true,
-    "useDefineForClassFields": false,
     "module": "ESNext",
     "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
+      "ES2022"
     ],
     "skipLibCheck": true,
     "types": [
@@ -17,18 +13,10 @@
     "isolatedModules": true,
     "moduleDetection": "force",
     "allowJs": true,
-    "jsx": "react-jsx",
-    "baseUrl": ".",
-    "paths": {
-      "@/*": [
-        "src/*"
-      ]
-    },
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
   "exclude": [
-    "frontend",
     "node_modules"
   ]
 }

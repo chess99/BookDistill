@@ -1,44 +1,14 @@
 # BookDistill
 
-AI 驱动的书籍知识提炼工具，支持 **网页端** 和 **命令行** 两种使用方式。
-
-上传 EPUB 或 Markdown 格式的书籍，自动生成结构化的知识摘要，并可直接推送到 GitHub 仓库。
+AI 驱动的书籍知识提炼工具，支持命令行和 Claude Code Skill 两种使用方式。
 
 ## 功能
 
-- 支持 EPUB、Markdown 格式
+- 支持 EPUB、Markdown、PDF、AZW3 格式
 - **Z-Library 链接直接下载**：传入 z-library 书籍链接，自动下载并提炼
 - 多 AI 提供方：Google Gemini、OpenAI、Anthropic、任意 OpenAI 兼容接口
 - 多语言输出（中文、英文、日文等）
-- 网页端：拖拽上传，流式输出，一键保存到 GitHub
 - 命令行：配置文件驱动，支持全交互或完全非交互模式
-
-## 网页端
-
-### 本地开发
-
-```bash
-npm install
-npm run dev
-# 访问 http://localhost:3000
-```
-
-### 配置 AI 提供方
-
-打开页面后点击左下角 **Settings**，填写：
-
-| 字段 | 说明 |
-|------|------|
-| Provider | 选择提供方（Gemini / OpenAI / Anthropic / OpenAI Compatible） |
-| API Key | 对应提供方的 API Key |
-| Base URL | 可选，自定义端点（openai_compatible 必填） |
-| Model | 模型 ID，可从预设选择或手动输入 |
-
-### GitHub Pages 部署
-
-仓库已包含 `.github/workflows/deploy-pages.yml`，推送到 `main` 分支自动部署。
-
-首次配置：**Settings → Pages → Build and deployment → GitHub Actions**
 
 ## 命令行（CLI）
 
@@ -194,41 +164,36 @@ npx tsx cli/distill.ts config --show
 
 ```
 BookDistill/
-├── src/                      # 网页端源码
-│   ├── main.tsx              # 入口
-│   ├── App.tsx
+├── src/                      # 共享库
+│   ├── constants.ts          # 语言、provider 预设、AI 提示词模板
 │   ├── types.ts
-│   ├── constants.ts
-│   ├── config/               # 共享配置（语言、provider 预设等）
-│   ├── components/           # React 组件
-│   │   └── views/            # 各页面视图
-│   ├── hooks/                # React Hooks
-│   ├── services/             # AI 调用、解析器、GitHub
-│   │   ├── zlibraryService.ts # Z-Library 下载服务
-│   │   └── parsers/          # EPUB / Markdown 解析器
-│   ├── utils/                # 文件名、slug 工具
+│   ├── lib/                  # 核心逻辑
+│   │   ├── parsers/          # EPUB / Markdown / PDF / AZW3 解析器
+│   │   ├── ai.ts             # AI 调用
+│   │   ├── github.ts         # GitHub API
+│   │   ├── zlibrary.ts       # Z-Library 下载
+│   │   ├── hierarchical.ts   # 长文本分层提炼
+│   │   ├── filename.ts       # 文件名/frontmatter 生成
+│   │   └── slug.ts
+│   ├── scripts/              # 批量处理脚本（pipeline）
 │   └── test/                 # 测试脚本和固件
 ├── cli/                      # 命令行工具
 │   ├── distill.ts            # CLI 入口
 │   ├── config.ts             # 配置读写
 │   ├── prompt.ts             # 交互式输入
 │   ├── config.json           # 本地配置（gitignored）
-│   ├── config.example.json   # 配置模板
-│   └── adapters/             # Node.js 环境适配器
+│   └── config.example.json   # 配置模板
 ├── skill/                    # Claude Code skill
 │   ├── SKILL.md              # skill 定义和工作流程
 │   └── scripts/
 │       ├── extract_epub.ts   # 独立 EPUB 文本提取脚本
 │       └── package.json      # 依赖（jszip、jsdom）
-├── index.html                # Vite HTML 入口
-├── vite.config.ts
 └── tsconfig.json
 ```
 
 ## 安全说明
 
 - `cli/config.json` 已加入 `.gitignore`，不会被提交
-- 网页端 API Key 仅存储在浏览器 localStorage，不经过任何中间服务器
 - 请使用有配额限制的 Key，避免在共享设备上使用
 
 ## License
