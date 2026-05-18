@@ -134,11 +134,47 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --url "https://z-li
 ```
 
 **Step 2：提炼**
+
+先用解析脚本提取文本，再派子 agent 用 Claude 提炼：
+
 ```bash
-npx tsx /Users/zcs/code2/BookDistill/src/scripts/distill.ts \
-  --file /path/to/book.epub \
-  --output /tmp/distill-书名.md
+# Step 2a：提取文本到临时文件
+cat > /tmp/extract-book.mts << 'EXTRACT_EOF'
+import { parseEpub } from './src/lib/parsers/epub.js';
+import * as fs from 'fs';
+const r = await parseEpub('书籍路径.epub');
+fs.writeFileSync('/tmp/book-text-书名.txt', r.text);
+console.log(r.title, '|', r.author, '|', r.text.length, 'chars');
+EXTRACT_EOF
+npx tsx /tmp/extract-book.mts && rm /tmp/extract-book.mts
 ```
+
+```
+# Step 2b：派子 agent 提炼（替换书名/作者/slug/tags/分类等占位符）
+Agent(prompt="""
+读取文件 /tmp/book-text-书名.txt，这是《书名》（作者）的全文。
+提炼核心知识，写入 /tmp/distill-书名.md。
+
+frontmatter 格式：
+---
+slug: 拼音slug
+title: 中文书名
+author: 中文作者名
+tags: [标签1, 标签2]
+date: 'YYYY-MM-DD'
+---
+
+正文第一行：# 书名
+
+要求：
+- 中文写作，结构清晰（## / ###）
+- 覆盖所有核心框架、概念、方法，有足够深度
+- 不加"延伸阅读"章节
+- 3000-6000 字
+""")
+```
+
+> **注意**：不要调用 `distill.ts`，它是命令行备用工具。
 
 **Step 4：Agent 审核 frontmatter**
 

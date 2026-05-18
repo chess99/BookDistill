@@ -30,5 +30,5 @@ tags: [<tag1>, <tag2>]
 ---
 \`\`\`
 
-Then distill the book comprehensively — cover all major frameworks, tools, and concepts with enough depth to be actionable. Structure the content however best serves the book. End with a "延伸阅读" / "Further Reading" section recommending related books with brief rationale.
+Then distill the book comprehensively — cover all major frameworks, tools, and concepts with enough depth to be actionable. Structure the content however best serves the book.
 `.trim();
