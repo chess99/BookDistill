@@ -135,22 +135,25 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/download.ts --url "https://z-li
 
 **Step 2：提炼**
 
-先用解析脚本提取文本，再派子 agent 用 Claude 提炼：
+先提取文本，根据大小决定提炼方式：
 
 ```bash
-# Step 2a：提取文本到临时文件
-cat > /tmp/extract-book.mts << 'EXTRACT_EOF'
-import { parseEpub } from './src/lib/parsers/epub.js';
+# Step 2a：提取文本（在项目目录下执行，支持 epub/pdf/mobi/azw3）
+cd /Users/zcs/code2/BookDistill
+npx tsx -e "
+import { parseFile } from './src/lib/parsers/index.js';
 import * as fs from 'fs';
-const r = await parseEpub('书籍路径.epub');
+const r = await parseFile('书籍路径.epub');
 fs.writeFileSync('/tmp/book-text-书名.txt', r.text);
 console.log(r.title, '|', r.author, '|', r.text.length, 'chars');
-EXTRACT_EOF
-npx tsx /tmp/extract-book.mts && rm /tmp/extract-book.mts
+"
 ```
 
-```
-# Step 2b：派子 agent 提炼（替换书名/作者/slug/tags/分类等占位符）
+**Step 2b：根据字符数选择提炼方式**
+
+- `chars ≤ 800000`（约 80 万字以内）→ 派子 agent 用 Claude 提炼：
+
+```text
 Agent(prompt="""
 读取文件 /tmp/book-text-书名.txt，这是《书名》（作者）的全文。
 提炼核心知识，写入 /tmp/distill-书名.md。
@@ -174,9 +177,15 @@ date: 'YYYY-MM-DD'
 """)
 ```
 
-> **注意**：不要调用 `distill.ts`，它是命令行备用工具。
+- `chars > 800000` → 回退到 `distill.ts`（有分层提炼，这是在 pipeline 内合法使用它的唯一场景）：
 
-**Step 4：Agent 审核 frontmatter**
+```bash
+npx tsx /Users/zcs/code2/BookDistill/src/scripts/distill.ts \
+  --file 书籍路径.epub \
+  --output /tmp/distill-书名.md
+```
+
+**Step 3：Agent 审核 frontmatter**
 
 读取 `/tmp/distill-书名.md` 前 20 行，逐项检查并修正：
 
@@ -195,7 +204,7 @@ date: 'YYYY-MM-DD'
 
 发现问题直接修改 `/tmp/distill-书名.md` 再入库，不要跳过。
 
-**Step 5：Agent 推断分类**
+**Step 4：Agent 推断分类**
 
 ```bash
 ls ~/Notes/ai-reading/books/  # 看现有分类
@@ -203,14 +212,14 @@ ls ~/Notes/ai-reading/books/  # 看现有分类
 
 结合书名、作者、提炼内容前 300 字，判断最合适的分类。可以新建分类目录。
 
-**Step 6：入库**
+**Step 5：入库**
 ```bash
 npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
   --distill /tmp/distill-书名.md \
   --category 分类名
 ```
 
-**Step 7：更新 pipeline.md**
+**Step 6：更新 pipeline.md**
 
 直接编辑文件：
 - 成功：将条目状态改为 `[x]`，移到"已完成"区，附上输出路径
@@ -306,7 +315,7 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
    - author 含国籍前缀："[美]纳西姆·尼古拉斯·塔勒布"、"(美)卡尔·纽波特 著"
    - slug 过长：每个字都拼音导致超过40字符
    - tags 为空：AI 没有推断标签
-   - 解决：Step 4 Agent 审核时逐项检查修正
+   - 解决：Step 3 Agent 审核时逐项检查修正
 
 5. **z-library 每日下载额度（免费账号 10 本/天）**
    - 额度用完时：下载按钮仍显示，`/dl/` 链接存在，但 navigate 过去跳转到 "Daily limit reached" 提示页，不触发 download 事件
@@ -357,5 +366,5 @@ npx tsx /Users/zcs/code2/BookDistill/src/scripts/ingest.ts \
 └── pipeline-run.ts       # 全自动调度器（不推荐，选书不准确）
 ```
 
-**推荐**：Agent 直接调用 `download.ts`、`distill.ts`、`ingest.ts`，
-逐本处理，每步验证。
+**推荐**：Agent 直接调用 `download.ts`、`ingest.ts`，逐本处理，每步验证。
+（`distill.ts` 仅命令行备用，pipeline 内用子 agent 提炼，超长书例外）
